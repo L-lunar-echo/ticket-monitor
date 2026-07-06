@@ -73,14 +73,16 @@
 
     <div id="events-container">
         {% for ev_id, ev in events.items() %}
-        {# 關鍵修改：檢查任何一個區域的狀態只要不是「已售完」，就認定為有票 #}
+        {# 檢查任何一個區域的狀態只要不是「已售完」，就認定為有票 #}
         {% set has_ticket = false %}
         {% for zone, status in ev.tickets.items() %}
             {% if status != "已售完" %}
                 {% set has_ticket = true %}
             {% endif %}
         {% endfor %}
-        <div class="event-card">
+        
+        {# 修正：務必加上 id="card-{{ ev_id }}" 讓 JavaScript 能成功鎖定此卡片 #}
+        <div class="event-card" id="card-{{ ev_id }}">
             <div class="event-header">
                 <div class="main-info">
                     <div class="notify-control">
@@ -102,14 +104,14 @@
                 <ul id="ticket-list-{{ ev_id }}" style="padding-left: 20px; color: #444; margin-top: 8px; font-size: 13px; list-style-type: none;">
                     {% set ns = namespace(printed=false) %}
                     {% for ticket, status in ev.tickets.items() %}
-                        {# 隱藏已售完區域：只在狀態非「已售完」時渲染出來 #}
+                        {# 只在狀態非「已售完」時渲染出來 #}
                         {% if status != "已售完" %}
                             <li style="margin-bottom: 5px;">🚨 {{ ticket }}: <b style="color: #dc3545;">{{ status }}</b></li>
                             {% set ns.printed = true %}
                         {% endif %}
                     {% endfor %}
                     
-                    {# 如果全部都售完，顯示一行乾淨的提示 #}
+                    {# 如果整場都售完，顯示一行乾淨的提示 #}
                     {% if not ns.printed %}
                         <li class="text-soldout text-center py-1">🔒 目前所有區域均無釋票 (已售完)</li>
                     {% endif %}
@@ -217,19 +219,20 @@
                     
                     for (let zone in ev.tickets) {
                         let status = ev.tickets[zone];
+                        // 已售完的區域直接過濾掉不顯示
                         if (status !== "已售完") {
                             hasTicket = true;
                             listHtml += `<li style="margin-bottom: 5px;">🚨 ${zone}: <b style="color: #dc3545;">${status}</b></li>`;
                         }
                     }
 
-                    // 如果真的全賣光，插入乾淨提示
+                    // 整場都完全沒票才顯示已售完
                     if (!hasTicket) {
                         listHtml = `<li class="text-soldout text-center py-1">🔒 目前所有區域均無釋票 (已售完)</li>`;
                     }
                     listUl.innerHTML = listHtml;
 
-                    // 更新頂部的大 Badge 狀態標籤
+                    // 確保頂部的大 Badge 狀態標籤同步更新
                     if (hasTicket) {
                         badge.innerText = "還有票 🎫";
                         badge.className = "status-badge status-available";
@@ -238,7 +241,7 @@
                         badge.className = "status-badge status-sold-out";
                     }
 
-                    // 只有「之前沒票 -> 現在有票」的那一刻才發送網頁通知，避免轟炸
+                    // 只有「之前沒票 -> 現在有票」的那一刻才發送網頁通知
                     const prev = lastKnownHasTicket[id];
                     if (prev === false && hasTicket === true && subscriptions.has(id)) {
                         fireNotification(ev.name);
