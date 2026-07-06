@@ -57,12 +57,18 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 events_status = {}
 status_lock = threading.Lock()
 
+# 除錯用: 存最後一次抓到的原始頁面內容(文字化後),方便用 /debug/<event_id> 查看
+raw_debug_cache = {}
 
-def check_kktix(url: str) -> dict:
+
+def check_kktix(url: str, event_id: str = None) -> dict:
     """檢查 KKTIX 場次頁面,回傳 {票種名稱: '有票' or '售完'}"""
     resp = requests.get(url, headers=HEADERS, timeout=15)
     resp.raise_for_status()
     soup = BeautifulSoup(resp.text, "html.parser")
+
+    if event_id:
+        raw_debug_cache[event_id] = resp.text
 
     result = {}
     tickets = soup.select("tr.ticket-unit, div.ticket-unit, li.ticket-unit")
@@ -81,7 +87,7 @@ def check_kktix(url: str) -> dict:
     return result
 
 
-def check_tixcraft(url: str) -> dict:
+def check_tixcraft(url: str, event_id: str = None) -> dict:
     """
     用 Playwright 開一個真的無頭瀏覽器讀取拓元頁面。
     注意: 拓元有 Cloudflare 防護,這是誠實的基本嘗試,不保證能穩定通過;
@@ -100,7 +106,11 @@ def check_tixcraft(url: str) -> dict:
         page.wait_for_timeout(4000)  # 等待可能的 JS 渲染 / Cloudflare 檢查頁
         content = page.content()
         title = page.title()
+        current_url = page.url  # 記錄最終網址,若被導向排隊頁/首頁就看得出來
         browser.close()
+
+    if event_id:
+        raw_debug_cache[event_id] = f"[最終網址: {current_url}]\n[標題: {title}]\n\n{content}"
 
     soup = BeautifulSoup(content, "html.parser")
 
@@ -143,7 +153,7 @@ def background_worker():
             if checker is None:
                 continue
             try:
-                tickets = checker(ev["url"])
+                tickets = checker(ev["url"], ev["id"])
                 with status_lock:
                     events_status[ev["id"]] = {
                         "name": ev["name"],
@@ -181,6 +191,19 @@ def api_status():
     with status_lock:
         data = dict(events_status)
     return jsonify(data)
+
+
+@app.route("/debug/<event_id>")
+def debug_page(event_id):
+    """
+    除錯用: 顯示最後一次實際抓到的原始頁面內容(純文字呈現,方便複製)。
+    正式上線給一般人用時建議拿掉這個路由,現在是為了排查 selector 問題先留著。
+    """
+    html = raw_debug_cache.get(event_id)
+    if html is None:
+        return f"還沒有 {event_id} 的快取資料,等下一輪背景檢查跑完再試。", 404
+    from flask import Response
+    return Response(html, mimetype="text/plain; charset=utf-8")
 
 
 # 啟動背景執行緒(避免 Flask debug reloader 啟動兩次背景執行緒)
