@@ -4,14 +4,14 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>演唱會釋票監控系統</title>
-    <link href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@400;500;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@400;500;700;900&display=swap" rel="stylesheet">
     <style>
         :root {
-            --bg-color: #f7f5f3;      /* 韓系淺灰底色 */
-            --card-bg: #ffffff;       /* 純白卡片 */
-            --text-main: #333333;     /* 深灰文字 */
-            --accent-color: #8c7b75;  /* 暖棕色 */
-            --border-color: #e5e0dc;  /* 淺棕灰邊框 */
+            --bg-color: #d1d1d1;
+            --card-bg: #ffffff;
+            --text-main: #333333;
+            --accent-color: #8c7b75;
+            --border-color: #e5e0dc;
         }
 
         body { 
@@ -19,48 +19,47 @@
             max-width: 600px; 
             margin: 0 auto; 
             padding: 20px; 
-            /* 灰底白色波點背景設計 */
             background-color: var(--bg-color); 
             background-image: radial-gradient(#ffffff 20%, transparent 20%);
             background-size: 30px 30px; 
             color: var(--text-main);
             font-size: 14px; 
-            font-weight: 500;
+            font-weight: 600;
         }
 
-        h1 { color: #1a1a1a; margin-bottom: 10px; text-align: center; font-size: 24px; font-weight: 700; }
-        .subtitle { color: #555; margin-bottom: 20px; font-size: 13px; text-align: center; line-height: 1.4; font-weight: 500; }
+        h1 { color: #1a1a1a; margin-bottom: 10px; text-align: center; font-size: 26px; font-weight: 900; }
+        .subtitle { color: #444; margin-bottom: 20px; font-size: 14px; text-align: center; line-height: 1.4; font-weight: 700; }
         
-        .author { font-size: 12px; color: #777; margin-bottom: 20px; text-align: center; font-weight: 500; }
-        .author a { color: var(--accent-color); text-decoration: none; font-weight: bold; margin: 0 8px; white-space: nowrap; display: inline-block; }
+        .author { font-size: 13px; color: #666; margin-bottom: 20px; text-align: center; font-weight: 700; }
+        .author a { color: var(--accent-color); text-decoration: none; font-weight: 900; margin: 0 8px; white-space: nowrap; display: inline-block; }
         
-        .event-card { background: var(--card-bg); border-radius: 10px; margin-bottom: 12px; border: 1px solid var(--border-color); box-shadow: 0 1px 4px rgba(0,0,0,0.03); overflow: hidden; }
+        .event-card { background: var(--card-bg); border-radius: 10px; margin-bottom: 12px; border: 1px solid var(--border-color); box-shadow: 0 2px 6px rgba(0,0,0,0.05); overflow: hidden; }
         .event-header { padding: 15px; }
         .main-info { display: flex; align-items: center; gap: 12px; }
         
         .notify-control { display: flex; flex-direction: column; align-items: center; min-width: 35px; }
-        .notify-control input { width: 18px; height: 18px; cursor: pointer; accent-color: var(--accent-color); }
-        .notify-control label { font-size: 10px; margin-top: 3px; color: #999; font-weight: 600; }
+        .notify-control input { width: 20px; height: 20px; cursor: pointer; accent-color: var(--accent-color); }
+        .notify-control label { font-size: 11px; margin-top: 3px; color: #777; font-weight: 800; }
         
         .event-info { flex-grow: 1; min-width: 0; }
-        .event-name { font-size: 14px; font-weight: 700; color: #222; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .event-meta { font-size: 11px; color: #bbb; margin-top: 2px; font-weight: 500; }
+        .event-name { font-size: 15px; font-weight: 900; color: #111; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .event-meta { font-size: 12px; color: #999; margin-top: 2px; font-weight: 700; }
         
-        .status-badge { padding: 3px 10px; border-radius: 4px; font-size: 11px; font-weight: bold; min-width: 60px; text-align: center; white-space: nowrap; }
-        .status-sold-out { background-color: #f4f4f4; color: #999; border: 1px solid #eee; }
+        .status-badge { padding: 4px 10px; border-radius: 5px; font-size: 12px; font-weight: 900; min-width: 65px; text-align: center; white-space: nowrap; }
+        .status-sold-out { background-color: #f0f0f0; color: #888; border: 1px solid #e0e0e0; }
         .status-available { background-color: #eee9e6; color: var(--accent-color); border: 1px solid #dcd3ce; }
         
-        .toggle-btn { text-align: left; margin-top: 12px; font-size: 12px; color: #aaa; cursor: pointer; border-top: 1px solid #f9f9f9; padding-top: 8px; font-weight: 600; }
-        .event-details { display: none; padding: 12px 15px; border-top: 1px solid #f9f9f9; background: #fafafa; font-size: 13px; text-align: left; }
+        .toggle-btn { text-align: left; margin-top: 12px; font-size: 13px; color: #888; cursor: pointer; border-top: 1px solid #f9f9f9; padding-top: 8px; font-weight: 800; }
+        .event-details { display: none; padding: 12px 15px; border-top: 1px solid #f9f9f9; background: #fafafa; font-size: 14px; text-align: left; }
         
-        .notification-btn { display: block; width: 100%; max-width: 180px; margin: 0 auto 20px auto; background: var(--text-main); color: #fff; border: none; padding: 10px; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 13px; }
+        .notification-btn { display: block; width: 100%; max-width: 200px; margin: 0 auto 20px auto; background: #222; color: #fff; border: none; padding: 12px; border-radius: 8px; cursor: pointer; font-weight: 900; font-size: 14px; }
     </style>
 </head>
 <body>
 
     <div>
         <h1>꒰ 演唱會釋票監控系統 ꒱</h1>
-        <div class="subtitle">🪄 請先點擊右方［開啟通知 💌］鍵，再勾選下方監控場次‪₊˚⊹ ʚɞ</div>
+        <div class="subtitle">🪄 請先點擊［開啟通知 💌］鍵，再勾選下方監控場次‪₊ʚɞ</div>
         <div class="author">
             <a href="https://www.threads.com/@___lunarecho" target="_blank">Threads｜@___lunarecho</a>
             <a href="https://lin.ee/ouqhqZD" target="_blank">LINE｜＠963maprr</a>
@@ -87,8 +86,8 @@
             </div>
             
             <div class="event-details" id="details-{{ ev_id }}">
-                <a href="{{ ev.url }}" target="_blank" style="color: var(--accent-color); font-weight: bold; text-decoration: none;">➡️ 前往購票頁面</a>
-                <ul style="padding-left: 20px; color: #666; margin-top: 8px; font-weight: 500; font-size: 12px;">
+                <a href="{{ ev.url }}" target="_blank" style="color: var(--accent-color); font-weight: 900; text-decoration: none;">➡️ 前往購票頁面</a>
+                <ul style="padding-left: 20px; color: #444; margin-top: 8px; font-weight: 700; font-size: 13px;">
                     {% for ticket, status in ev.tickets.items() %}
                     <li style="margin-bottom: 3px;">{{ ticket }}: <b>{{ status }}</b></li>
                     {% endfor %}
@@ -98,7 +97,7 @@
         {% endfor %}
     </div>
 
-    <div style="margin-top: 25px; padding: 10px; color: #aaa; font-size: 11px; font-weight: 500; text-align: center;">
+    <div style="margin-top: 25px; padding: 10px; color: #888; font-size: 12px; font-weight: 700; text-align: center;">
         ⚠️ 偵測數據有些微延遲，搶票請以購票頁面即時狀況為準。
     </div>
 
@@ -115,27 +114,7 @@
             }
         }
 
-        function requestNotificationPermission() {
-            Notification.requestPermission().then(p => {
-                if(p === 'granted') { new Notification("📦 系統測試", { body: "通知功能已啟用，請勾選各場次以開始進行監控！" }); }
-                else { alert("請允許通知權限！"); }
-            });
-        }
-
-        function handleCheckboxChange(id, name) {
-            const cb = document.getElementById('notify-toggle-' + id);
-            if (Notification.permission !== 'granted') {
-                alert("請先開啟通知權限！");
-                cb.checked = false;
-                return;
-            }
-            if (cb.checked) {
-                new Notification("🔔 監控已開啟", { body: `已訂閱（${name}）的釋票提醒。` });
-            } else {
-                new Notification("🔕 監控已關閉", { body: `已取消（${name}）的釋票提醒。` });
-            }
-        }
-
+        // --- 狀態更新監控 ---
         setInterval(() => {
             fetch('/api/status')
             .then(r => r.json())
@@ -144,18 +123,25 @@
                     let ev = data[id];
                     let badge = document.getElementById('badge-' + id);
                     let hasTicket = Object.values(ev.tickets).includes("有票");
+                    
                     if (badge) {
                         if (hasTicket) {
-                            badge.innerText = "還有票🎫";
+                            // 在這裡修改「還有票」的文字與樣式
+                            badge.innerText = "還有票 🎫";
                             badge.className = "status-badge status-available";
                         } else {
-                            badge.innerText = "已售完🈳";
+                            // 在這裡修改「已售完」的文字與樣式
+                            badge.innerText = "已售完 🈳";
                             badge.className = "status-badge status-sold-out";
                         }
                     }
                 }
             });
         }, 60000);
+
+        function requestNotificationPermission() {
+            Notification.requestPermission();
+        }
     </script>
 </body>
 </html>
