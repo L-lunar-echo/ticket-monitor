@@ -11,20 +11,23 @@
         .author { font-size: 12px; color: #999; margin-bottom: 20px; }
         
         .event-card { background: white; border-radius: 12px; margin-bottom: 15px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); border: 1px solid #dadce0; }
-        .event-header { padding: 15px; display: flex; align-items: center; }
+        .event-header { padding: 15px; }
+        .main-info { display: flex; align-items: center; margin-bottom: 10px; }
         
         .notify-control { display: flex; align-items: center; background: #f8f9fa; padding: 10px; border-radius: 8px; border: 1px solid #e8eaed; margin-right: 15px; }
         .notify-control input { width: 20px; height: 20px; cursor: pointer; }
         .notify-control label { font-size: 13px; font-weight: 600; color: #1a73e8; margin-left: 8px; cursor: pointer; }
         
-        .event-clickable { flex-grow: 1; cursor: pointer; display: flex; justify-content: space-between; align-items: center; }
+        .event-info { flex-grow: 1; }
         .event-name { font-size: 16px; font-weight: bold; color: #3c4043; }
         .event-meta { font-size: 12px; color: #70757a; margin-top: 4px; }
         
-        /* 簡化版票況顏色：紅色=有票，灰色=沒票 */
+        /* 展開按鈕樣式 */
+        .toggle-btn { display: inline-block; margin-top: 8px; font-size: 13px; color: #1a73e8; cursor: pointer; font-weight: 600; text-decoration: underline; }
+        
         .status-badge { padding: 4px 12px; border-radius: 16px; font-size: 12px; font-weight: bold; }
-        .status-available { background-color: #fce8e6; color: #d93025; border: 1px solid #f5c2c1; } /* 紅色 */
-        .status-sold-out { background-color: #f1f3f4; color: #5f6368; border: 1px solid #e8eaed; } /* 灰色 */
+        .status-available { background-color: #fce8e6; color: #d93025; border: 1px solid #f5c2c1; }
+        .status-sold-out { background-color: #f1f3f4; color: #5f6368; border: 1px solid #e8eaed; }
         
         .event-details { display: none; padding: 15px; border-top: 1px solid #f1f3f4; background: #fafafa; }
         .notification-btn { background: #1a73e8; color: white; border: none; padding: 10px 20px; border-radius: 20px; cursor: pointer; font-weight: bold; }
@@ -43,22 +46,27 @@
         {% for ev_id, ev in events.items() %}
         <div class="event-card">
             <div class="event-header">
-                <div class="notify-control">
-                    <input type="checkbox" id="notify-toggle-{{ ev_id }}" onchange="handleCheckboxChange('{{ ev_id }}', '{{ ev.name }}')">
-                    <label>訂閱</label>
-                </div>
-                <div class="event-clickable" onclick="toggleDetails('{{ ev_id }}')">
-                    <div>
+                <div class="main-info">
+                    <div class="notify-control">
+                        <input type="checkbox" id="notify-toggle-{{ ev_id }}" onchange="handleCheckboxChange('{{ ev_id }}', '{{ ev.name }}')">
+                        <label>訂閱</label>
+                    </div>
+                    <div class="event-info">
                         <div class="event-name">{{ ev.name }}</div>
                         <div class="event-meta">最後更新：{{ ev.updated_at }}</div>
                     </div>
-                    <div>
-                        <span id="badge-{{ ev_id }}" class="status-badge status-sold-out">檢查中</span>
-                    </div>
+                    <span id="badge-{{ ev_id }}" class="status-badge status-sold-out">檢查中</span>
                 </div>
+                <div class="toggle-btn" onclick="toggleDetails('{{ ev_id }}')">🔽 查看完整票池狀況</div>
             </div>
+            
             <div class="event-details" id="details-{{ ev_id }}">
                 <a href="{{ ev.url }}" target="_blank" style="color: #1a73e8; font-weight: bold;">➡️ 前往購票頁面</a>
+                <ul style="padding-left: 20px; font-size: 14px; color: #555; margin-top: 10px;">
+                    {% for ticket, status in ev.tickets.items() %}
+                    <li>{{ ticket }}: <b>{{ status }}</b></li>
+                    {% endfor %}
+                </ul>
             </div>
         </div>
         {% endfor %}
@@ -71,9 +79,17 @@
     <script>
         function toggleDetails(id) {
             const el = document.getElementById('details-' + id);
-            el.style.display = (el.style.display === 'block') ? 'none' : 'block';
+            const btn = event.target;
+            if (el.style.display === 'block') {
+                el.style.display = 'none';
+                btn.innerText = '🔽 查看完整票池狀況';
+            } else {
+                el.style.display = 'block';
+                btn.innerText = '🔼 收起完整票池狀況';
+            }
         }
 
+        // ... (其他原有 JS 邏輯不變) ...
         function requestNotificationPermission() {
             Notification.requestPermission().then(p => {
                 if(p === 'granted') {
@@ -98,7 +114,6 @@
             }
         }
 
-        // 自動更新狀態與顏色邏輯
         setInterval(() => {
             fetch('/api/status')
             .then(r => r.json())
@@ -107,13 +122,14 @@
                     let ev = data[id];
                     let badge = document.getElementById('badge-' + id);
                     let hasTicket = Object.values(ev.tickets).includes("有票");
-                    
-                    if (hasTicket) {
-                        badge.innerText = "有票！";
-                        badge.className = "status-badge status-available"; 
-                    } else {
-                        badge.innerText = "已售完";
-                        badge.className = "status-badge status-sold-out";
+                    if (badge) {
+                        if (hasTicket) {
+                            badge.innerText = "有票🎫";
+                            badge.className = "status-badge status-available";
+                        } else {
+                            badge.innerText = "已售完🈳";
+                            badge.className = "status-badge status-sold-out";
+                        }
                     }
                 }
             });
