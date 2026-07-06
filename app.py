@@ -32,13 +32,13 @@ EVENTS = [
         "id": "donghae-khh-0726",
         "platform": "kktix",
         "name": "DONGHAE 高雄場 7/26",
-        # 已更新為你提供的正確自訂網域活動介紹頁網址
         "url": "https://daydreamerstudio.kktix.cc/events/cd3b83be",
     },
     {
         "id": "henry-moodie-khh",
         "platform": "tixcraft",
         "name": "Henry Moodie 高雄場",
+        # 已更新為你指定的正確拓元區域網址
         "url": "https://tixcraft.com/ticket/area/26_henry/22868",
     },
 ]
