@@ -21,51 +21,51 @@ EVENTS = [
     {
         "id": "donghae-khh-0725",
         "platform": "kktix",
-        "name": "[7/25] DONGHAE 1ST SOLO CONCERT TOUR [ALIVE] in KAOHSIUNG",
+        "name": "7/25｜DONGHAE SOLO CONCERT TOUR｜高雄場",
         "url": "https://daydreamerstudio.kktix.cc/events/b14fcf04",
     },
     {
         "id": "donghae-khh-0726",
         "platform": "kktix",
-        "name": "[7/26] DONGHAE 1ST SOLO CONCERT TOUR [ALIVE] in KAOHSIUNG",
+        "name": "7/26｜DONGHAE SOLO CONCERT TOUR｜高雄場",
         "url": "https://daydreamerstudio.kktix.cc/events/cd3b83be",
     },
     {
         "id": "henry-moodie-khh",
         "platform": "tixcraft",
-        "name": "Henry Moodie：Mood Swings World Tour in Kaohsiung",
+        "name": "9/28｜Henry Moodie WORLD TOUR｜高雄場",
         "url": "https://tixcraft.com/ticket/area/26_henry/22868",
     },
     {
         "id": "ibon-current-event",  
         "platform": "ibon",         
-        "name": "2026 FTISLAND TOUR 0 — XIX — III ‘FaTe’ in KAOHSIUNG",   
+        "name": "9/12｜FTISLAND TOUR｜高雄場",   
         "url": "https://orders.ibon.com.tw/application/UTK02/UTK0201_000.aspx?PERFORMANCE_ID=B0BS5PP2&PRODUCT_ID=B0BQXQ8M&strItem=WEB%E7%B6%B2%E7%AB%99%E5%85%A5%E5%8F%A31",
     },
     # ---- aespa 台北場 ----
     {
         "id": "tixcraft-aespa-taipei",
         "platform": "tixcraft",
-        "name": "aespa LIVE TOUR - SYNK：COMPLæXITY - in TAIPEI",
+        "name": "8/11｜aespa LIVE TOUR｜台北場",
         "url": "https://tixcraft.com/ticket/area/26_aespa/22415",
     },
     # ---- BTS 高雄場三場次 ----
     {
         "id": "tixcraft-bts-1119",
         "platform": "tixcraft",
-        "name": "[11/19] BTS WORLD TOUR ’ARIRANG’ IN KAOHSIUNG",
+        "name": "11/19｜BTS WORLD TOUR｜高雄場",
         "url": "https://tixcraft.com/ticket/area/26_btskns/22510",
     },
     {
         "id": "tixcraft-bts-1121",
         "platform": "tixcraft",
-        "name": "[11/21] BTS WORLD TOUR ’ARIRANG’ IN KAOHSIUNG",
+        "name": "11/21｜BTS WORLD TOUR｜高雄場",
         "url": "https://tixcraft.com/ticket/area/26_btskns/22763",
     },
     {
         "id": "tixcraft-bts-1122",
         "platform": "tixcraft",
-        "name": "[11/22] BTS WORLD TOUR ’ARIRANG’ IN KAOHSIUNG",
+        "name": "11/22｜BTS WORLD TOUR｜高雄場",
         "url": "https://tixcraft.com/ticket/area/26_btskns/22764",
     },
 ]
