@@ -1,47 +1,148 @@
 <!DOCTYPE html>
-<html lang="zh-Hant">
+<html lang="zh-TW">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>演唱會票況監控</title>
-<meta http-equiv="refresh" content="60">
-<style>
-  body { font-family: -apple-system, "Noto Sans TC", sans-serif; background:#f5f5f7; margin:0; padding:16px; }
-  h1 { font-size: 20px; }
-  .card { background:#fff; border-radius:12px; padding:16px; margin-bottom:12px; box-shadow:0 1px 4px rgba(0,0,0,0.08); }
-  .card h2 { font-size:16px; margin:0 0 8px; }
-  .ticket-row { display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px solid #eee; font-size:14px; }
-  .status-ok { color:#0a8a0a; font-weight:bold; }
-  .status-soldout { color:#999; }
-  .status-unknown { color:#c77700; }
-  .updated { font-size:12px; color:#888; margin-top:8px; }
-  .error { color:#c00; font-size:13px; }
-</style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>演唱會釋票監控</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; background-color: #f4f6f9; }
+        .event-card { background: white; border-radius: 8px; margin-bottom: 15px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); overflow: hidden; }
+        
+        /* 標題啟動區（按進去的地方） */
+        .event-header { padding: 15px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; background-color: #fff; transition: background 0.2s; }
+        .event-header:hover { background-color: #f0f0f0; }
+        .event-info { flex-grow: 1; }
+        .event-name { font-size: 16px; font-weight: bold; color: #333; }
+        .event-meta { font-size: 12px; color: #666; margin-top: 5px; }
+        
+        /* 狀態標籤 */
+        .status-badge { padding: 5px 10px; border-radius: 20px; font-size: 14px; font-weight: bold; }
+        .status-all-sold { background-color: #ffebee; color: #c62828; }
+        .status-available { background-color: #e8f5e9; color: #2e7d32; animation: pulse 1.5s infinite; }
+        
+        /* 票價詳細區域（預設隱藏） */
+        .event-details { display: none; padding: 15px; background-color: #fafafa; border-top: 1px solid #eee; }
+        .ticket-table { width: 100%; border-collapse: collapse; }
+        .ticket-table td { padding: 8px; border-bottom: 1px solid #eee; font-size: 14px; }
+        .ticket-status { text-align: right; font-weight: bold; }
+        .text-available { color: #2e7d32; }
+        .text-sold { color: #999; }
+
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+            100% { transform: scale(1); }
+        }
+        .notification-btn { background: #1a73e8; color: white; border: none; padding: 10px 15px; border-radius: 4px; cursor: pointer; margin-bottom: 20px; }
+    </style>
 </head>
 <body>
-  <h1>🎫 演唱會票況監控</h1>
-  <p style="font-size:13px;color:#888;">頁面每 60 秒自動重新整理,資料每 1~2 分鐘於後台更新一次。</p>
 
-  {% for eid, ev in events.items() %}
-  <div class="card">
-    <h2><a href="{{ ev.url }}" target="_blank">{{ ev.name }}</a></h2>
-    {% if ev.error %}
-      <div class="error">檢查發生問題: {{ ev.error }}</div>
-    {% endif %}
-    {% if ev.tickets %}
-      {% for ticket_name, status in ev.tickets.items() %}
-      <div class="ticket-row">
-        <span>{{ ticket_name }}</span>
-        <span class="{{ 'status-ok' if status == '有票' else ('status-soldout' if status == '售完' else 'status-unknown') }}">
-          {{ status }}
-        </span>
-      </div>
-      {% endfor %}
-    {% endif %}
-    <div class="updated">最後更新: {{ ev.updated_at or '尚未取得資料' }}</div>
-  </div>
-  {% else %}
-  <p>目前沒有監控中的場次。</p>
-  {% endfor %}
+    <h1>演唱會釋票監控系統</h1>
+    <button class="notification-btn" onclick="requestNotificationPermission()">開啟桌面釋票通知</button>
+
+    <div id="events-container">
+        {% for ev_id, ev in events.items() %}
+        {% set has_ticket = false %}
+        {% for ticket, status in ev.tickets.items() %}
+            {% if status == '有票' %}{% set has_ticket = true %}{% endif %}
+        {% endfor %}
+        
+        <div class="event-card" id="card-{{ ev_id }}">
+            <div class="event-header" onclick="toggleDetails('{{ ev_id }}')">
+                <div class="event-info">
+                    <div class="event-name">{{ ev.name }}</div>
+                    <div class="event-meta">更新時間：{{ ev.updated_at }}</div>
+                </div>
+                <div>
+                    {% if has_ticket %}
+                        <span class="status-badge status-available">有釋票！</span>
+                    {% else %}
+                        <span class="status-badge status-all-sold">已售完</span>
+                    {% endif %}
+                </div>
+            </div>
+            
+            <div class="event-details" id="details-{{ ev_id }}">
+                <p><a href="{{ ev.url }}" target="_blank" style="color: #1a73e8; text-decoration: none; font-weight: bold;">👉 前往購票連結</a></p>
+                <table class="ticket-table">
+                    {% for ticket, status in ev.tickets.items() %}
+                    <tr>
+                        <td>{{ ticket }}</td>
+                        <td class="ticket-status {% if status == '有票' %}text-available{% else %}text-sold{% endif %}">
+                            {{ status }}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </table>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+
+    <script>
+        // 控制收合與展開
+        function toggleDetails(eventId) {
+            const detailsDiv = document.getElementById('details-' + eventId);
+            if (detailsDiv.style.display === 'block') {
+                detailsDiv.style.style.display = 'none';
+            } else {
+                detailsDiv.style.display = 'block';
+            }
+        }
+
+        // 請求瀏覽器通知權限
+        function requestNotificationPermission() {
+            if (!("Notification" in window)) {
+                alert("此瀏覽器不支援桌面通知");
+                return;
+            }
+            Notification.requestPermission().then(permission => {
+                if (permission === "granted") {
+                    alert("通知功能已開啟！有釋票時將會跳出提示。");
+                    new Notification("系統提示", { body: "釋票通知功能已成功啟動！" });
+                }
+            });
+        }
+
+        // 自動每 30 秒輪詢後端 API，檢查是否有新釋票並跳出通知
+        let previousStatus = {};
+        function checkUpdates() {
+            fetch('/api/status')
+                .then(response => response.json())
+                .then(data => {
+                    for (let id in data) {
+                        let ev = data[id];
+                        let hasTicket = Object.values(ev.tickets).includes("有票");
+                        
+                        // 如果之前是沒票，現在變的有票，觸發通知
+                        if (previousStatus[id] === false && hasTicket === true) {
+                            if (Notification.permission === "granted") {
+                                new Notification("🚨 發現釋票通知！", {
+                                    body: `${ev.name} 偵測到有部分票券釋出，請立刻前往搶票！`,
+                                    requireInteraction: true // 讓通知持續留在螢幕上直到使用者關閉
+                                });
+                            }
+                            // 可選：播放提示音效
+                            let audio = new Audio('https://actions.google.com/sounds/v1/alarms/digital_watch_alarm_long.ogg');
+                            audio.play();
+                        }
+                        // 紀錄當前狀態供下次比對
+                        previousStatus[id] = hasTicket;
+                    }
+                });
+        }
+
+        // 初始化先記錄一次當前狀態，之後每 30 秒檢查一次
+        setTimeout(() => {
+            fetch('/api/status').then(r => r.json()).then(data => {
+                for (let id in data) {
+                    previousStatus[id] = Object.values(data[id].tickets).includes("有票");
+                }
+            });
+        }, 1000);
+
+        setInterval(checkUpdates, 30000); // 30 秒檢查一次後端快取是否有變動
+    </script>
 </body>
 </html>
