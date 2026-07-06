@@ -37,7 +37,7 @@
         .text-sold { color: #999; }
 
         @keyframes pulse {
-            0% { transform: scale(1); }
+            0 { transform: scale(1); }
             50% { transform: scale(1.05); }
             100% { transform: scale(1); }
         }
@@ -65,7 +65,7 @@
         <div class="event-card" id="card-{{ ev_id }}">
             <div class="event-header">
                 <div class="notify-control">
-                    <input type="checkbox" id="notify-toggle-{{ ev_id }}" class="notify-checkbox" data-name="{{ ev.name }}">
+                    <input type="checkbox" id="notify-toggle-{{ ev_id }}" class="notify-checkbox" onchange="handleCheckboxChange('{{ ev_id }}', '{{ ev.name }}')">
                     <label for="notify-toggle-{{ ev_id }}">接收通知</label>
                 </div>
 
@@ -108,7 +108,13 @@
             detailsDiv.style.display = (detailsDiv.style.display === 'block') ? 'none' : 'block';
         }
 
-        // 請求瀏覽器通知權限
+        // 播放測試與通知音效
+        function playNotificationSound() {
+            let audio = new Audio('https://actions.google.com/sounds/v1/alarms/digital_watch_alarm_long.ogg');
+            audio.play().catch(e => console.log("音效播放被瀏覽器阻擋，需與網頁互動過後才可播放"));
+        }
+
+        // 請求瀏覽器通知權限 + 發送測試通知
         function requestNotificationPermission() {
             if (!("Notification" in window)) {
                 alert("此瀏覽器不支援桌面通知");
@@ -116,9 +122,35 @@
             }
             Notification.requestPermission().then(permission => {
                 if (permission === "granted") {
-                    alert("通知功能已開啟！請記得勾選下方場次的「接收通知」方塊。");
+                    // 權限開啟成功，立刻發送測試通知
+                    new Notification("🔔 釋票通知系統測試", {
+                        body: "桌面通知功能已成功開啟！接下來請勾選下方您想監控的場次。",
+                        requireInteraction: false
+                    });
+                    playNotificationSound();
+                } else if (permission === "denied") {
+                    alert("您拒絕了通知權限，將無法收到釋票提醒。請至瀏覽器設定中重新開啟。");
                 }
             });
+        }
+
+        // 當使用者「勾選」或「取消勾選」個別場次時觸發
+        function handleCheckboxChange(eventId, eventName) {
+            const checkbox = document.getElementById(`notify-toggle-${eventId}`);
+            
+            // 如果使用者是「勾選」通知
+            if (checkbox && checkbox.checked) {
+                if (Notification.permission === "granted") {
+                    // 發送該場次的獨立測試通知
+                    new Notification("✅ 場次訂閱成功", {
+                        body: `您已成功開啟【${eventName}】的釋票通知！有票時將第一時間通知您。`,
+                        requireInteraction: false
+                    });
+                    playNotificationSound();
+                } else {
+                    alert("請先點擊右上角的「開啟桌面通知功能」按鈕，否則勾選後將無法收到通知！");
+                }
+            }
         }
 
         // 追蹤各場次前一次的狀態（避免重複轟炸通知）
@@ -132,34 +164,25 @@
                         let ev = data[id];
                         let hasTicket = Object.values(ev.tickets).includes("有票");
                         
-                        // 檢查使用者「有沒有勾選」這個場次的通知
                         const checkbox = document.getElementById(`notify-toggle-${id}`);
                         const isSubscribed = checkbox ? checkbox.checked : false;
                         
-                        // 關鍵判斷：先前沒票 -> 現在有票 -> 且使用者有勾選監控
+                        // 真正的釋票通知判斷
                         if (previousStatus[id] === false && hasTicket === true) {
-                            if (isSubscribed) {
-                                // 觸發桌面通知
-                                if (Notification.permission === "granted") {
-                                    new Notification("🚨 訂閱場次釋票了！", {
-                                        body: `${ev.name} 偵測到有票券釋出！請立刻前往搶票！`,
-                                        requireInteraction: true 
-                                    });
-                                }
-                                // 播放提示音
-                                let audio = new Audio('https://actions.google.com/sounds/v1/alarms/digital_watch_alarm_long.ogg');
-                                audio.play().catch(e => console.log("音效播放被瀏覽器阻擋，需與網頁互動過後才可播放"));
-                            } else {
-                                console.log(`[系統提示] ${ev.name} 有釋票，但使用者未開啟該場次通知。`);
+                            if (isSubscribed && Notification.permission === "granted") {
+                                new Notification("🚨 訂閱場次釋票了！", {
+                                    body: `${ev.name} 偵測到有票券釋出！請立刻前往搶票！`,
+                                    requireInteraction: true 
+                                });
+                                playNotificationSound();
                             }
                         }
-                        // 紀錄當前狀態
                         previousStatus[id] = hasTicket;
                     }
                 });
         }
 
-        // 初始化：先記錄當前的票況狀態，避免一整理網頁就瘋狂跳通知
+        // 初始化狀態
         setTimeout(() => {
             fetch('/api/status').then(r => r.json()).then(data => {
                 for (let id in data) {
