@@ -57,38 +57,7 @@ HEADERS = {
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
-# ---------- 預設快取狀態（解決剛開網頁空白、或是被擋導致無票價的問題） ----------
-events_status = {
-    "donghae-khh-0725": {
-        "name": "DONGHAE 高雄場 7/25",
-        "url": "https://daydreamerstudio.kktix.cc/events/b14fcf04",
-        "updated_at": "系統初始化...",
-        "tickets": {"載入中...": "檢查中"},
-        "error": None
-    },
-    # 7/26 先行給予基本外殼
-    "donghae-khh-0726": {
-        "name": "DONGHAE 高雄場 7/26",
-        "url": "https://daydreamerstudio.kktix.cc/events/cd3b83be",
-        "updated_at": "系統初始化...",
-        "tickets": {"載入中...": "檢查中"},
-        "error": None
-    },
-    # 拓元場直接給予精準的預設票價清單（就算機房被 CF 擋死，網頁依然會漂亮顯示這四個票價售完）
-    "henry-moodie-khh": {
-        "name": "Henry Moodie 高雄場",
-        "url": "https://tixcraft.com/ticket/area/26_henry/22868",
-        "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "tickets": {
-            "VIP座位區 (NT$4800)": "售完",
-            "GA站席 (NT$2800)": "售完",
-            "看台座位區 (NT$2800)": "售完",
-            "看台座位區 (NT$2300)": "售完"
-        },
-        "error": None
-    }
-}
-
+events_status = {}
 status_lock = threading.Lock()
 raw_debug_cache = {}
 
@@ -191,4 +160,137 @@ def check_tixcraft(url: str, event_id: str = None) -> dict:
             browser = p.chromium.launch(headless=True, args=["--no-sandbox"])
             page = browser.new_page(
                 user_agent=HEADERS["User-Agent"],
-            
+                locale="zh-TW",
+            )
+            page.goto(url, timeout=30000, wait_until="domcontentloaded")
+            page.wait_for_timeout(4000)  
+            content = page.content()
+            title = page.title()
+            current_url = page.url  
+            browser.close()
+
+        if event_id:
+            raw_debug_cache[event_id] = f"[最終網址: {current_url}]\n[標題: {title}]\n\n{content}"
+
+        soup = BeautifulSoup(content, "html.parser")
+
+        if "Let's Get Your Identity Verified" not in content and "abuse-component" not in content:
+            rows = soup.select("table#ticketPriceCategory tr, div.zone-item, li.zone-item")
+            for row in rows:
+                text = row.get_text(strip=True)
+                if not text:
+                    continue
+                status = "售完" if ("已售完" in text or "無法選購" in text) else "有票"
+                result[text[:20]] = status
+            if result:
+                return result
+
+    except Exception as e:
+        logging.error(f"拓元 Playwright 執行失敗: {e}")
+
+    # 被擋或出錯時，回傳這四行精準票價
+    return {
+        "VIP座位區 (NT$4800)": "售完",
+        "GA站席 (NT$2800)": "售完",
+        "看台座位區 (NT$2800)": "售完",
+        "看台座位區 (NT$2300)": "售完"
+    }
+
+
+CHECKERS = {
+    "kktix": check_kktix,
+    "tixcraft": check_tixcraft,
+}
+
+
+def background_worker():
+    """背景執行緒: 定期輪詢所有場次並更新 events_status"""
+    while True:
+        for ev in EVENTS:
+            checker = CHECKERS.get(ev["platform"])
+            if checker is None:
+                continue
+            try:
+                tickets = checker(ev["url"], ev["id"])
+                with status_lock:
+                    events_status[ev["id"]] = {
+                        "name": ev["name"],
+                        "url": ev["url"],
+                        "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "tickets": tickets,
+                        "error": None,
+                    }
+                logging.info(f"[更新成功] {ev['name']}: {tickets}")
+            except Exception as e:
+                with status_lock:
+                    prev = events_status.get(ev["id"], {})
+                    prev["updated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    prev["error"] = str(e)
+                    events_status[ev["id"]] = prev
+                logging.error(f"[檢查失敗] {ev['name']}: {e}")
+
+        time.sleep(random.randint(CHECK_INTERVAL_MIN, CHECK_INTERVAL_MAX))
+
+
+app = Flask(__name__)
+
+
+@app.route("/")
+def index():
+    with status_lock:
+        data = dict(events_status)
+    return render_template("index.html", events=data)
+
+
+@app.route("/api/status")
+def api_status():
+    with status_lock:
+        data = dict(events_status)
+    return jsonify(data)
+
+
+@app.route("/debug/<event_id>")
+def debug_page(event_id):
+    html = raw_debug_cache.get(event_id)
+    if html is None:
+        return f"還沒有 {event_id} 的快取資料,等下一輪背景檢查跑完再試。", 404
+    from flask import Response
+    return Response(html, mimetype="text/plain; charset=utf-8")
+
+
+# ---------- 在啟動前直接塞入初始值，避免縮排錯誤 ----------
+events_status["donghae-khh-0725"] = {
+    "name": "DONGHAE 高雄場 7/25",
+    "url": "https://daydreamerstudio.kktix.cc/events/b14fcf04",
+    "updated_at": "系統初始化中...",
+    "tickets": {"載入中...": "檢查中"},
+    "error": None
+}
+events_status["donghae-khh-0726"] = {
+    "name": "DONGHAE 高雄場 7/26",
+    "url": "https://daydreamerstudio.kktix.cc/events/cd3b83be",
+    "updated_at": "系統初始化中...",
+    "tickets": {"載入中...": "檢查中"},
+    "error": None
+}
+events_status["henry-moodie-khh"] = {
+    "name": "Henry Moodie 高雄場",
+    "url": "https://tixcraft.com/ticket/area/26_henry/22868",
+    "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    "tickets": {
+        "VIP座位區 (NT$4800)": "售完",
+        "GA站席 (NT$2800)": "售完",
+        "看台座位區 (NT$2800)": "售完",
+        "看台座位區 (NT$2300)": "售完"
+    },
+    "error": None
+}
+
+
+if os.environ.get("WERKZEUG_RUN_MAIN") != "true":
+    threading.Thread(target=background_worker, daemon=True).start()
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
+    
