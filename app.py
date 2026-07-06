@@ -21,19 +21,19 @@ EVENTS = [
     {
         "id": "donghae-khh-0725",
         "platform": "kktix",
-        "name": "DONGHAE 高雄場 7/25",
+        "name": "【7/25場次】2026 DONGHAE 1ST SOLO CONCERT TOUR [ALIVE] in KAOHSIUNG",
         "url": "https://daydreamerstudio.kktix.cc/events/b14fcf04",
     },
     {
         "id": "donghae-khh-0726",
         "platform": "kktix",
-        "name": "DONGHAE 高雄場 7/26",
+        "name": "【7/26場次】2026 DONGHAE 1ST SOLO CONCERT TOUR [ALIVE] in KAOHSIUNG",
         "url": "https://daydreamerstudio.kktix.cc/events/cd3b83be",
     },
     {
         "id": "henry-moodie-khh",
         "platform": "tixcraft",
-        "name": "Henry Moodie 高雄場",
+        "name": "Henry Moodie：Mood Swings World Tour in Kaohsiung",
         "url": "https://tixcraft.com/ticket/area/26_henry/22868",
     },
     {
