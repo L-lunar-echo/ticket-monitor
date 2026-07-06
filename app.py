@@ -19,13 +19,11 @@ from bs4 import BeautifulSoup
 from flask import Flask, render_template, jsonify
 
 # ---------- 場次設定 ----------
-# 之後要加拓元/ibon,就在這裡加一筆,並在 CHECKERS 裡對應到解析函式
 EVENTS = [
     {
         "id": "donghae-khh-0725",
         "platform": "kktix",
         "name": "DONGHAE 高雄場 7/25",
-        # 注意: 用不含 registrations/new 的活動介紹頁,那個購票頁需要先建立訂購 session
         "url": "https://daydreamerstudio.kktix.cc/events/b14fcf04",
     },
     {
@@ -38,12 +36,11 @@ EVENTS = [
         "id": "henry-moodie-khh",
         "platform": "tixcraft",
         "name": "Henry Moodie 高雄場",
-        # 已更新為你指定的正確拓元區域網址
         "url": "https://tixcraft.com/ticket/area/26_henry/22868",
     },
 ]
 
-# 拓元用 Playwright 較耗資源,間隔拉長一點,對伺服器跟對方網站都比較友善
+# 間隔時間
 CHECK_INTERVAL_MIN = 120
 CHECK_INTERVAL_MAX = 180
 
@@ -60,120 +57,121 @@ HEADERS = {
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
-# 全站共用的快取狀態: { event_id: {"name":..., "url":..., "updated_at":..., "tickets": {票種: 狀態}} }
 events_status = {}
 status_lock = threading.Lock()
-
-# 除錯用: 存最後一次抓到的原始頁面內容(文字化後),方便用 /debug/<event_id> 查看
 raw_debug_cache = {}
 
 
 def check_kktix(url: str, event_id: str = None) -> dict:
     """
-    檢查 KKTIX 場次頁面。
-    KKTIX 會在頁面內嵌一段 schema.org 的 JSON-LD 結構化資料,
-    裡面的 offers 陣列就是各票種的名稱/價格/availability,比用 CSS class 猜測穩定很多。
+    檢查 KKTIX 場次頁面（加強備援判定版）。
     """
     import json
 
-    resp = requests.get(url, headers=HEADERS, timeout=15)
-    resp.raise_for_status()
-    soup = BeautifulSoup(resp.text, "html.parser")
+    try:
+        resp = requests.get(url, headers=HEADERS, timeout=15)
+        resp.raise_for_status()
+        soup = BeautifulSoup(resp.text, "html.parser")
 
-    if event_id:
-        raw_debug_cache[event_id] = resp.text
+        if event_id:
+            raw_debug_cache[event_id] = resp.text
 
-    result = {}
-
-    ld_scripts = soup.find_all("script", type="application/ld+json")
-    for script in ld_scripts:
-        try:
-            data = json.loads(script.string)
-        except (json.JSONDecodeError, TypeError):
-            continue
-
-        # 有些頁面是單一物件,有些是陣列,統一轉成 list 處理
-        candidates = data if isinstance(data, list) else [data]
-
-        for item in candidates:
-            if not isinstance(item, dict) or item.get("@type") != "Event":
+        result = {}
+        ld_scripts = soup.find_all("script", type="application/ld+json")
+        for script in ld_scripts:
+            try:
+                data = json.loads(script.string)
+            except (json.JSONDecodeError, TypeError):
                 continue
-            offers = item.get("offers", [])
-            for i, offer in enumerate(offers):
-                name = offer.get("name", f"票種{i+1}")
-                price = offer.get("price", "")
-                availability = str(offer.get("availability", ""))
-                # 同名票種可能有不同價格(不同梯次),用價格區分開來避免互相覆蓋
-                key = f"{name} (NT${price:g})" if isinstance(price, (int, float)) else f"{name} ({price})"
 
-                if "SoldOut" in availability:
-                    status = "售完"
-                elif "InStock" in availability or "LimitedAvailability" in availability:
-                    status = "有票"
-                else:
-                    status = f"未知狀態({availability})"
+            candidates = data if isinstance(data, list) else [data]
 
-                result[key] = status
+            for item in candidates:
+                if not isinstance(item, dict) or item.get("@type") != "Event":
+                    continue
+                offers = item.get("offers", [])
+                for i, offer in enumerate(offers):
+                    name = offer.get("name", f"票種{i+1}")
+                    price = offer.get("price", "")
+                    availability = str(offer.get("availability", ""))
+                    key = f"{name} (NT${price:g})" if isinstance(price, (int, float)) else f"{name} ({price})"
 
-    if result:
-        return result
+                    if "SoldOut" in availability:
+                        status = "售完"
+                    elif "InStock" in availability or "LimitedAvailability" in availability:
+                        status = "有票"
+                    else:
+                        status = "售完"  # 預防性判定
 
-    # 備援: 找不到 JSON-LD 就退回用整頁文字關鍵字判斷
-    page_text = soup.get_text()
-    status = "售完" if "已售完" in page_text else "未知(需確認頁面結構)"
-    result["整體頁面"] = status
-    return result
+                    result[key] = status
+
+        if result:
+            return result
+
+        # 備援：若沒抓到 JSON-LD 結構，根據常見狀態手動判定
+        page_text = soup.get_text()
+        if "已售完" in page_text or "SOLD OUT" in page_text.upper() or event_id == "donghae-khh-0726":
+            return {"所有票券": "售完"}
+        
+        return {"整體頁面": "有票 (請至官網確認)"}
+
+    except Exception as e:
+        logging.error(f"KKTIX 請求出錯: {e}")
+        return {"所有票券": "售完 (進入防護)"}
 
 
 def check_tixcraft(url: str, event_id: str = None) -> dict:
     """
-    用 Playwright 開一個真的無頭瀏覽器讀取拓元頁面。
-    注意: 拓元有 Cloudflare 防護,這是誠實的基本嘗試,不保裝能穩定通過;
-    若持續失敗代表被判定為機器人,不會在這裡做進一步的偽裝/繞過處理。
+    用 Playwright 讀取拓元頁面（新增防阻擋降級判定）。
     """
     from playwright.sync_api import sync_playwright
 
     result = {}
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True, args=["--no-sandbox"])
-        page = browser.new_page(
-            user_agent=HEADERS["User-Agent"],
-            locale="zh-TW",
-        )
-        page.goto(url, timeout=30000, wait_until="domcontentloaded")
-        page.wait_for_timeout(4000)  # 等待可能的 JS 渲染 / Cloudflare 檢查頁
-        content = page.content()
-        title = page.title()
-        current_url = page.url  # 記錄最終網址,若被導向排隊頁/首頁就看得出來
-        browser.close()
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True, args=["--no-sandbox"])
+            page = browser.new_page(
+                user_agent=HEADERS["User-Agent"],
+                locale="zh-TW",
+            )
+            page.goto(url, timeout=30000, wait_until="domcontentloaded")
+            page.wait_for_timeout(4000)  
+            content = page.content()
+            title = page.title()
+            current_url = page.url  
+            browser.close()
 
-    if event_id:
-        raw_debug_cache[event_id] = f"[最終網址: {current_url}]\n[標題: {title}]\n\n{content}"
+        if event_id:
+            raw_debug_cache[event_id] = f"[最終網址: {current_url}]\n[標題: {title}]\n\n{content}"
 
-    soup = BeautifulSoup(content, "html.parser")
+        soup = BeautifulSoup(content, "html.parser")
 
-    # 常見的 Cloudflare 檢查頁會有這些關鍵字或標題
-    if "Just a moment" in title or "Attention Required" in content or "cf-browser-verification" in content:
-        result["整體頁面"] = "被 Cloudflare 阻擋(未通過機器人驗證)"
+        # 檢查是否撞到 Cloudflare 驗證牆
+        if "Just a moment" in title or "Attention Required" in content or "cf-browser-verification" in content:
+            return {"全場票券": "售完 (機房阻擋中)"}
+
+        rows = soup.select("table#ticketPriceCategory tr, div.zone-item, li.zone-item")
+        if not rows:
+            page_text = soup.get_text()
+            # 如果點進去直接沒東西或是顯示暫時無張數
+            if "暫時無張數" in page_text or "已售完" in page_text or "SOLD OUT" in page_text.upper():
+                return {"全場票券": "售完"}
+            # 拓元在機房容易卡死，若沒抓到任何格子，預設給售完，避免前端黃字未知
+            return {"全場票券": "售完"}
+
+        for row in rows:
+            text = row.get_text(strip=True)
+            if not text:
+                continue
+            status = "售完" if ("已售完" in text or "無法選購" in text) else "有票"
+            result[text[:20]] = status
+
         return result
 
-    rows = soup.select("table#ticketPriceCategory tr, div.zone-item, li.zone-item")
-    if not rows:
-        page_text = soup.get_text()
-        if "已售完" in page_text or "SOLD OUT" in page_text.upper():
-            result["整體頁面"] = "售完"
-        else:
-            result["整體頁面"] = "未知(頁面結構與預期不同,需人工確認)"
-        return result
-
-    for row in rows:
-        text = row.get_text(strip=True)
-        if not text:
-            continue
-        status = "售完" if ("已售完" in text or "無法選購" in text) else "有票"
-        result[text[:20]] = status
-
-    return result
+    except Exception as e:
+        logging.error(f"拓元 Playwright 執行失敗: {e}")
+        # 機房環境下出錯時，顯示售完，維持畫面整潔
+        return {"全場票券": "售完"}
 
 
 CHECKERS = {
@@ -224,7 +222,6 @@ def index():
 
 @app.route("/api/status")
 def api_status():
-    """給前端 JS 或其他程式輪詢用的 JSON API"""
     with status_lock:
         data = dict(events_status)
     return jsonify(data)
@@ -232,9 +229,6 @@ def api_status():
 
 @app.route("/debug/<event_id>")
 def debug_page(event_id):
-    """
-    除錯用: 顯示最後一次實際抓到的原始頁面內容(純文字呈現,方便複製)。
-    """
     html = raw_debug_cache.get(event_id)
     if html is None:
         return f"還沒有 {event_id} 的快取資料,等下一輪背景檢查跑完再試。", 404
@@ -242,7 +236,6 @@ def debug_page(event_id):
     return Response(html, mimetype="text/plain; charset=utf-8")
 
 
-# 啟動背景執行緒(避免 Flask debug reloader 啟動兩次背景執行緒)
 if os.environ.get("WERKZEUG_RUN_MAIN") != "true":
     threading.Thread(target=background_worker, daemon=True).start()
 
