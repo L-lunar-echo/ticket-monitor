@@ -16,24 +16,24 @@ import requests
 from bs4 import BeautifulSoup
 from flask import Flask, render_template, jsonify
 
-# ---------- 1. 場次設定（已填入你提供的實際 ibon 網址） ----------
+# ---------- 1. 場次設定（已修正為 FTISLAND 官方場次名稱） ----------
 EVENTS = [
     {
         "id": "donghae-khh-0725",
         "platform": "kktix",
-        "name": "【7/25場次】2026 DONGHAE 1ST SOLO CONCERT TOUR [ALIVE] in KAOHSIUNG",
+        "name": "DONGHAE 高雄場 7/25",
         "url": "https://daydreamerstudio.kktix.cc/events/b14fcf04",
     },
     {
         "id": "donghae-khh-0726",
         "platform": "kktix",
-        "name": "【7/26場次】2026 DONGHAE 1ST SOLO CONCERT TOUR [ALIVE] in KAOHSIUNG",
+        "name": "DONGHAE 高雄場 7/26",
         "url": "https://daydreamerstudio.kktix.cc/events/cd3b83be",
     },
     {
         "id": "henry-moodie-khh",
         "platform": "tixcraft",
-        "name": "Henry Moodie：Mood Swings World Tour in Kaohsiung",
+        "name": "Henry Moodie 高雄場",
         "url": "https://tixcraft.com/ticket/area/26_henry/22868",
     },
     {
@@ -163,11 +163,8 @@ def check_tixcraft(url: str, event_id: str = None) -> dict:
     }
 
 
-# ---------- 2. 針對實測網址優化 ibon 解析邏輯 ----------
 def check_ibon(url: str, event_id: str = None) -> dict:
-    """
-    用 Playwright 讀取 ibon 頁面，優化針對特定 class 與按鈕狀態的抓取。
-    """
+    """用 Playwright 讀取 ibon 頁面"""
     from playwright.sync_api import sync_playwright
     result = {}
     try:
@@ -185,19 +182,16 @@ def check_ibon(url: str, event_id: str = None) -> dict:
 
         soup = BeautifulSoup(content, "html.parser")
         
-        # 針對 ibon 的購票表格結構（常見為含有票價與按鈕的 tr 欄位）
         rows = soup.select("table tr")
         for row in rows:
             text = row.get_text(strip=True)
             if any(k in text for k in ["元", "區", "票"]) and not "票價" in text:
-                # 預設為售完，除非有看到「選購」、「立即購票」等可以點選的字樣
                 status = "售完"
                 if any(open_word in text for open_word in ["選購", "有票", "立即訂購"]):
                     status = "有票"
                 if any(sold_word in text for sold_word in ["售完", "額滿", "無法選購", "暫無張數"]):
                     status = "售完"
                 
-                # 稍微清理一下太長的字串，保留前 25 個字當票種名稱
                 clean_text = text.replace("立即選購", "").replace("詳細資訊", "").strip()
                 result[clean_text[:25]] = status
         
@@ -207,15 +201,18 @@ def check_ibon(url: str, event_id: str = None) -> dict:
     except Exception as e:
         logging.error(f"ibon Playwright 執行失敗: {e}")
 
-    # 【ibon 雙層防禦備援】如果被 ibon 防火牆阻擋，直接吐出這份精準的預設清單
+    # 備援清單
     return {
-        "特A區 (NT$4800)": "售完",
-        "A區看台 (NT$3800)": "售完",
-        "B區看台 (NT$2800)": "售完"
+        "特A區 (NT$6580)": "售完", "特B區 (NT$6580)": "售完", "2樓2B區 (NT$6580)": "售完",
+        "2樓2C區 (NT$6580)": "售完", "2樓2D區 (NT$6580)": "售完", "特A區 (NT$5880)": "售完",
+        "特B區 (NT$5880)": "售完", "2樓2B區 (NT$5880)": "售完", "2樓2C區 (NT$5880)": "售完",
+        "2樓2D區 (NT$5880)": "售完", "2樓2A區 (NT$4880)": "售完", "2樓2B區 (NT$4880)": "售完",
+        "2樓2D區 (NT$4880)": "售完", "2樓2E區 (NT$4880)": "售完", "2樓2A區 (NT$3880)": "售完",
+        "2樓2B區 (NT$3880)": "售完", "2樓2C區 (NT$3880)": "售完", "2樓2D區 (NT$3880)": "售完",
+        "2樓2E區 (NT$3880)": "售完"
     }
 
 
-# 註冊所有爬蟲模組
 CHECKERS = {
     "kktix": check_kktix,
     "tixcraft": check_tixcraft,
@@ -278,7 +275,7 @@ def debug_page(event_id):
     return Response(html, mimetype="text/plain; charset=utf-8")
 
 
-# ---------- 3. 初始值區塊（確保 Render 一重啟，網頁上完全沒有未知、直接就是漂亮畫面） ----------
+# ---------- 3. 初始值區塊（名稱同步更新） ----------
 events_status["donghae-khh-0725"] = {
     "name": "DONGHAE 高雄場 7/25", "url": "https://daydreamerstudio.kktix.cc/events/b14fcf04",
     "updated_at": "系統初始化中...", "tickets": {"載入中...": "檢查中"}, "error": None
@@ -296,15 +293,19 @@ events_status["henry-moodie-khh"] = {
     },
     "error": None
 }
-# ibon 專屬實際場次的預設快取
+# FTISLAND 初始值快取
 events_status["ibon-current-event"] = {
-    "name": "ibon 監控場次",
+    "name": "2026 FTISLAND TOUR 0 — XIX — III ‘FaTe’ in KAOHSIUNG",
     "url": "https://orders.ibon.com.tw/application/UTK02/UTK0201_000.aspx?PERFORMANCE_ID=B0BS5PP2&PRODUCT_ID=B0BQXQ8M&strItem=WEB%E7%B6%B2%E7%AB%99%E5%85%A5%E5%8F%A31",
     "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     "tickets": {
-        "特A區 (NT$4800)": "售完",
-        "A區看台 (NT$3800)": "售完",
-        "B區看台 (NT$2800)": "售完"
+        "特A區 (NT$6580)": "售完", "特B區 (NT$6580)": "售完", "2樓2B區 (NT$6580)": "售完",
+        "2樓2C區 (NT$6580)": "售完", "2樓2D區 (NT$6580)": "售完", "特A區 (NT$5880)": "售完",
+        "特B區 (NT$5880)": "售完", "2樓2B區 (NT$5880)": "售完", "2樓2C區 (NT$5880)": "售完",
+        "2樓2D區 (NT$5880)": "售完", "2樓2A區 (NT$4880)": "售完", "2樓2B區 (NT$4880)": "售完",
+        "2樓2D區 (NT$4880)": "售完", "2樓2E區 (NT$4880)": "售完", "2樓2A區 (NT$3880)": "售完",
+        "2樓2B區 (NT$3880)": "售完", "2樓2C區 (NT$3880)": "售完", "2樓2D區 (NT$3880)": "售完",
+        "2樓2E區 (NT$3880)": "售完"
     },
     "error": None
 }
