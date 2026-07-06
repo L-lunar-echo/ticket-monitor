@@ -54,6 +54,8 @@
         
         .notification-btn { display: block; width: 100%; max-width: 200px; margin: 0 auto 6px auto; background: #222; color: #fff; border: none; padding: 12px; border-radius: 8px; cursor: pointer; font-weight: 700; font-size: 14px; }
         .notification-hint { text-align: center; font-size: 12px; color: #999; margin-bottom: 20px; font-weight: 700; }
+        
+        .text-soldout { color: #888; font-style: italic; font-size: 13px; }
     </style>
 </head>
 <body>
@@ -71,8 +73,13 @@
 
     <div id="events-container">
         {% for ev_id, ev in events.items() %}
-        {% set ticket_values = ev.tickets.values() | list if ev.tickets else [] %}
-        {% set has_ticket = '有票' in ticket_values %}
+        {# 關鍵修改：檢查任何一個區域的狀態只要不是「已售完」，就認定為有票 #}
+        {% set has_ticket = false %}
+        {% for zone, status in ev.tickets.items() %}
+            {% if status != "已售完" %}
+                {% set has_ticket = true %}
+            {% endif %}
+        {% endfor %}
         <div class="event-card">
             <div class="event-header">
                 <div class="main-info">
@@ -91,11 +98,21 @@
             </div>
             
             <div class="event-details" id="details-{{ ev_id }}">
-                <a href="{{ ev.url }}" target="_blank" style="color: var(--accent-color); font-weight: 700; text-decoration: none;">➡️ 前往購票頁面</a>
-                <ul style="padding-left: 20px; color: #444; margin-top: 8px; font-size: 13px;">
+                <a href="{{ ev.url }}" target="_blank" style="color: var(--accent-color); font-weight: 700; text-decoration: none; display: block; margin-bottom: 8px;">➡️ 前往購票頁面</a>
+                <ul id="ticket-list-{{ ev_id }}" style="padding-left: 20px; color: #444; margin-top: 8px; font-size: 13px; list-style-type: none;">
+                    {% set ns = namespace(printed=false) %}
                     {% for ticket, status in ev.tickets.items() %}
-                    <li style="margin-bottom: 3px;">{{ ticket }}: <b>{{ status }}</b></li>
+                        {# 隱藏已售完區域：只在狀態非「已售完」時渲染出來 #}
+                        {% if status != "已售完" %}
+                            <li style="margin-bottom: 5px;">🚨 {{ ticket }}: <b style="color: #dc3545;">{{ status }}</b></li>
+                            {% set ns.printed = true %}
+                        {% endif %}
                     {% endfor %}
+                    
+                    {# 如果全部都售完，顯示一行乾淨的提示 #}
+                    {% if not ns.printed %}
+                        <li class="text-soldout text-center py-1">🔒 目前所有區域均無釋票 (已售完)</li>
+                    {% endif %}
                 </ul>
             </div>
         </div>
@@ -105,7 +122,6 @@
     <script>
         const STORAGE_KEY = 'ticket_monitor_subscriptions';
 
-        // 讀取使用者之前勾選過、想接收通知的場次清單
         function loadSubscriptions() {
             try {
                 const raw = localStorage.getItem(STORAGE_KEY);
@@ -124,10 +140,8 @@
         }
 
         let subscriptions = loadSubscriptions();
-        // 記住每個場次「目前是否有票」,只有從沒票變有票的那一刻才發通知,避免每次輪詢都吵
         let lastKnownHasTicket = {};
 
-        // 頁面載入時,把之前勾選過的場次checkbox 打勾回來
         window.addEventListener('DOMContentLoaded', () => {
             subscriptions.forEach(id => {
                 const box = document.getElementById('notify-toggle-' + id);
@@ -166,10 +180,9 @@
             saveSubscriptions(subscriptions);
         }
 
-        // 切換詳細資訊顯示
         function toggleDetails(id) {
             const el = document.getElementById('details-' + id);
-            const btn = event.target;
+            const btn = event.currentTarget;
             if (el.style.display === 'block') {
                 el.style.display = 'none';
                 btn.innerText = '🔽 展開完整票池狀況';
@@ -186,18 +199,37 @@
             });
         }
 
-        // 狀態自動更新 (包含標籤顯示邏輯 + 通知邏輯)
+        // 狀態自動更新 (規格化串接精準張數版後端)
         setInterval(() => {
             fetch('/api/status')
             .then(r => r.json())
             .then(data => {
                 for (let id in data) {
                     let ev = data[id];
+                    let card = document.getElementById('card-' + id); 
                     let badge = document.getElementById('badge-' + id);
-                    if (!badge) continue;
+                    let listUl = document.getElementById('ticket-list-' + id);
+                    if (!badge || !listUl) continue;
 
-                    let hasTicket = Object.values(ev.tickets || {}).includes("有票");
+                    // 核心修正：只要狀態任何一個不是「已售完」，就視為有票
+                    let hasTicket = false;
+                    let listHtml = '';
+                    
+                    for (let zone in ev.tickets) {
+                        let status = ev.tickets[zone];
+                        if (status !== "已售完") {
+                            hasTicket = true;
+                            listHtml += `<li style="margin-bottom: 5px;">🚨 ${zone}: <b style="color: #dc3545;">${status}</b></li>`;
+                        }
+                    }
 
+                    // 如果真的全賣光，插入乾淨提示
+                    if (!hasTicket) {
+                        listHtml = `<li class="text-soldout text-center py-1">🔒 目前所有區域均無釋票 (已售完)</li>`;
+                    }
+                    listUl.innerHTML = listHtml;
+
+                    // 更新頂部的大 Badge 狀態標籤
                     if (hasTicket) {
                         badge.innerText = "還有票 🎫";
                         badge.className = "status-badge status-available";
@@ -206,7 +238,7 @@
                         badge.className = "status-badge status-sold-out";
                     }
 
-                    // 只有「之前沒票 -> 現在有票」的那一刻才通知,避免每次輪詢都吵
+                    // 只有「之前沒票 -> 現在有票」的那一刻才發送網頁通知，避免轟炸
                     const prev = lastKnownHasTicket[id];
                     if (prev === false && hasTicket === true && subscriptions.has(id)) {
                         fireNotification(ev.name);
@@ -214,7 +246,7 @@
                     lastKnownHasTicket[id] = hasTicket;
                 }
             }).catch(err => console.error("更新失敗", err));
-        }, 15000); // 每 15 秒檢查一次前端顯示(後端實際爬取頻率是分開控制的,不受這個影響)
+        }, 15000);
     </script>
 </body>
 </html>
