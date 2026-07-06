@@ -4,17 +4,10 @@ import random
 import logging
 import threading
 import re
-import sys
 from datetime import datetime
 
 from bs4 import BeautifulSoup
 from flask import Flask, render_template, jsonify
-
-# 如果在 Windows 系統，導入 winsound 發出警報聲
-if sys.platform == "win32":
-    import winsound
-else:
-    winsound = None
 
 # ---------- 1. 場次設定 ----------
 EVENTS = [
@@ -74,9 +67,9 @@ EVENTS = [
     },
 ]
 
-# 🚨 全自動密集監控間隔 (秒)：設為 5 ~ 10 秒隨機，模擬真人重新整理，防止被封鎖
-CHECK_INTERVAL_MIN = 5
-CHECK_INTERVAL_MAX = 10
+# ⚙️ 密集自動循環間隔：一輪跑完後，只休息 3~7 秒就立刻自動重啟下一輪重新整理
+CHECK_INTERVAL_MIN = 3
+CHECK_INTERVAL_MAX = 7
 
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
 
@@ -85,22 +78,8 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 events_status = {}
 status_lock = threading.Lock()
 
-def trigger_auto_alarm(event_name, zone_details):
-    """【自動化核心】當發現有票時，後端主動執行的自動警報"""
-    logging.info(f"🚨🚨🚨 [發現釋票!!!] {event_name} -> {zone_details}")
-    
-    # 讓電腦主動發出嗶嗶聲 (Windows 適用)
-    if winsound:
-        for _ in range(5):
-            winsound.Beep(1000, 500) # 頻率 1000Hz，持續 0.5 秒
-    else:
-        # Mac / Linux 終端機蜂鳴聲
-        for _ in range(5):
-            sys.stdout.write('\a')
-            sys.stdout.flush()
-            time.sleep(0.2)
-
 def clean_and_parse_status(text_content: str) -> str:
+    """精準清洗票池張數文字"""
     if any(k in text_content for k in ["售完", "無法選購", "🔒", "Closed"]):
         return "已售完"
     
@@ -112,17 +91,17 @@ def clean_and_parse_status(text_content: str) -> str:
 
 
 def monitor_with_playwright():
-    """全自動後端輪詢監控核心"""
+    """全自動、無間斷的票池背景監控核心執行緒"""
     from playwright.sync_api import sync_playwright
     
-    logging.info("[自動監控] 正在啟動自動化無痕瀏覽器...")
+    logging.info("[自動化啟動] 正在初始化持久化瀏覽器核心...")
     
     with sync_playwright() as p:
         profile_dir = os.path.join(os.getcwd(), "browser_profile")
         
         context = p.chromium.launch_persistent_context(
             profile_dir,
-            headless=False,  # 保持打開瀏覽器，方便你確認它有在自動刷頁面
+            headless=False,  # 必須保持打開視窗，以便保持登入 Session 狀態
             args=["--no-sandbox", "--disable-blink-features=AutomationControlled"],
             no_viewport=True
         )
@@ -130,23 +109,25 @@ def monitor_with_playwright():
         page = context.new_page()
         page.set_extra_http_headers({"User-Agent": USER_AGENT})
         
-        logging.info("【重要提示】請在彈出的 Chrome 視窗中完成登入。5 秒後開始全自動背景監控...")
+        logging.info("【重要提示】瀏覽器已啟動。請確保已在視窗內登入售票會員。程式即將進入『全自動無限循環監控模式』...")
         page.goto("https://tixcraft.com/user/login")
-        page.wait_for_timeout(5000) 
+        page.wait_for_timeout(4000) 
         
+        # 進入全自動無限死迴圈
         while True:
             for ev in EVENTS:
-                logging.info(f"[自動監控] 正在刷新：{ev['name']} ...")
+                logging.info(f"🔄 [全自動監控中] 正在刷新並讀取票池：{ev['name']} ...")
                 result = {}
                 
                 try:
-                    # 每次都強制連過去刷新頁面
+                    # 強制跳轉，等同於對該選區頁面自動按 F5 重新整理
                     page.goto(ev["url"], timeout=30000, wait_until="domcontentloaded")
-                    page.wait_for_timeout(1500)  # 稍微等待元件渲染
+                    page.wait_for_timeout(1200)  # 微幅等待防截圖或防載入延遲
                     
                     content = page.content()
                     soup = BeautifulSoup(content, "html.parser")
                     
+                    # 依平台精準解析當前所有選區的最新狀態
                     if ev["platform"] == "tixcraft":
                         rows = soup.select("table#ticketPriceCategory tr, div.zone-item, li.zone-item")
                         for row in rows:
@@ -171,29 +152,28 @@ def monitor_with_playwright():
                                 zone_name = text.split("NT$")[0].strip()
                                 result[zone_name] = clean_and_parse_status(text)
                     
+                    # 只要抓到有效票池，立即寫入全域快取鎖，前端 15 秒更新時就能立刻看到
                     if result:
-                        # 檢查是否有任何一區不是「已售完」
-                        available_zones = [f"{z}({status})" for z, status in result.items() if status != "已售完"]
-                        if available_zones:
-                            # 🎯 抓到了！直接觸發後端自動警報
-                            trigger_auto_alarm(ev["name"], ", ".join(available_zones))
-                        
                         with status_lock:
                             events_status[ev["id"]] = {
-                                "name": ev["name"], "url": ev["url"], "platform": ev["platform"],
+                                "name": ev["name"], 
+                                "url": ev["url"], 
+                                "platform": ev["platform"],
                                 "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                                "tickets": result, "error": None,
+                                "tickets": result, 
+                                "error": None,
                             }
+                        logging.info(f"✅ [狀態更新成功] {ev['name']} -> 最新的選區資料已同步到記憶體快取。")
                     
                 except Exception as e:
-                    logging.error(f"[監控異常] {ev['name']} 錯誤: {e}")
+                    logging.error(f"❌ [監控突發異常] {ev['name']} 發生錯誤: {e}，自動跳過本輪，保留上次成功的數據。")
                 
-                # 每個場次切換之間微幅休息，避免操作太密被偵測
+                # 場次和場次之間微調休息，避免因為切換網頁太神速而被售票系統防火牆風控
                 page.wait_for_timeout(1000)
             
-            # 全跑完一輪後，隨機休息 5~10 秒，緊接著自動跑下一輪重新整理
+            # 整輪全部巡邏完完畢，休息個 3~7 秒，立刻重啟下一輪大巡邏
             sleep_time = random.randint(CHECK_INTERVAL_MIN, CHECK_INTERVAL_MAX)
-            logging.info(f"⏳ 全自動監控完畢。背景等待 {sleep_time} 秒後自動重刷下一輪...")
+            logging.info(f"⏳ [一輪巡邏完畢] 背景微調休息 {sleep_time} 秒，即將自動重刷下一輪票池...")
             time.sleep(sleep_time)
 
 
@@ -201,23 +181,26 @@ app = Flask(__name__)
 
 @app.route("/")
 def index():
-    with status_lock: data = dict(events_status)
+    with status_lock: 
+        data = dict(events_status)
     return render_template("index.html", events=data)
 
 @app.route("/api/status")
 def api_status():
-    with status_lock: data = dict(events_status)
+    with status_lock: 
+        data = dict(events_status)
     return jsonify(data)
 
-# 初始化快取
+# 初始化預設狀態
 for ev in EVENTS:
     events_status[ev["id"]] = {
         "name": ev["name"], "url": ev["url"], "platform": ev["platform"],
         "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "tickets": {"確認中...": "請稍候"}, "error": None
+        "tickets": {"自動監控中": "請稍候首次刷新..."}, "error": None
     }
 
 if os.environ.get("WERKZEUG_RUN_MAIN") != "true":
+    # 確保自動監控核心在獨立執行緒背景 24 小時不斷線運作
     threading.Thread(target=monitor_with_playwright, daemon=True).start()
 
 if __name__ == "__main__":
