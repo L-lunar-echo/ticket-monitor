@@ -68,7 +68,7 @@ def check_kktix(url: str, event_id: str = None) -> dict:
     # 例如: https://daydreamerstudio.kktix.cc/events/cd3b83be -> cd3b83be
     slug = url.split("/events/")[-1].split("?")[0]
     
-    # KKTIX 購票點擊下一步時，後台非同步載入庫存的 API 網址
+    # KKTIX 點擊下一步時，後台用來查詢庫存張數的即時 API 網址
     api_url = f"https://kktix.com/g/events/{slug}/register_info"
     
     try:
@@ -81,7 +81,7 @@ def check_kktix(url: str, event_id: str = None) -> dict:
             
     except Exception as api_err:
         logging.warning(f"KKTIX API 請求失敗，嘗試改用購票頁 HTML 備援: {api_err}")
-        # 備援：若 API 被擋或失效，直接強攻購票頁面的 initData 變數
+        # 備援：若直接請求 API 被擋，強攻實體購票頁面中的 window.initData 變數
         reg_url = f"https://kktix.com/events/{slug}/registrations/new"
         resp = requests.get(reg_url, headers=HEADERS, timeout=15)
         resp.raise_for_status()
@@ -92,7 +92,7 @@ def check_kktix(url: str, event_id: str = None) -> dict:
         soup = BeautifulSoup(resp.text, "html.parser")
         result = {}
         
-        # 尋找購票頁面內嵌的 window.initData 庫存區塊
+        # 尋找購票頁面內嵌的庫存資料區塊
         match = re.search(r"window\.initData\s*=\s*({.*?});", resp.text, re.DOTALL)
         if match:
             try:
@@ -120,10 +120,99 @@ def check_kktix(url: str, event_id: str = None) -> dict:
 
     # 2. 順利取得 API 資料，精準分析每種票的庫存張數
     result = {}
-    inventory = data.get("inventory", {})  # 格式如: {"12345": 0, "67890": 2}
+    inventory = data.get("inventory", {})  # 各票種的真實剩餘庫存數量，如: {"12345": 0, "67890": 2}
     order_info = data.get("order_info", {})
     ticket_types = order_info.get("ticket_types", [])
 
     for t in ticket_types:
         name = t.get("name")
-        id_ =
+        id_ = str(t.get("id"))
+        price = t.get("price", "0")
+        key = f"{name} (NT${price})"
+        
+        # 判斷一：是否已被隱藏，或根本不在販售時間內（徹底解決 7/26 的過期/死掉場次誤判）
+        if t.get("is_hidden") or not t.get("in_sale_period"):
+            result[key] = "售完"
+            continue
+            
+        # 判斷二：檢查真實剩餘庫存張數
+        count = inventory.get(id_, 0)
+        result[key] = "有票" if count > 0 else "售完"
+
+    if not result:
+        # 保險文字降級機制
+        page_text = json.dumps(data)
+        status = "有票" if '"count":' in page_text and not '"count":0' in page_text else "售完"
+        result["整體頁面"] = status
+
+    return result
+
+
+CHECKERS = {
+    "kktix": check_kktix,
+}
+
+
+def background_worker():
+    """背景執行緒: 定期輪詢所有場次並更新 events_status"""
+    while True:
+        for ev in EVENTS:
+            checker = CHECKERS.get(ev["platform"])
+            if checker is None:
+                continue
+            try:
+                tickets = checker(ev["url"], ev["id"])
+                with status_lock:
+                    events_status[ev["id"]] = {
+                        "name": ev["name"],
+                        "url": ev["url"],
+                        "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "tickets": tickets,
+                        "error": None,
+                    }
+                logging.info(f"[更新成功] {ev['name']}: {tickets}")
+            except Exception as e:
+                with status_lock:
+                    prev = events_status.get(ev["id"], {})
+                    prev["error"] = str(e)
+                    prev["name"] = ev["name"]
+                    prev["url"] = ev["url"]
+                    events_status[ev["id"]] = prev
+                logging.error(f"[檢查失敗] {ev['name']}: {e}")
+
+        time.sleep(random.randint(CHECK_INTERVAL_MIN, CHECK_INTERVAL_MAX))
+
+
+app = Flask(__name__)
+
+
+@app.route("/")
+def index():
+    with status_lock:
+        data = dict(events_status)
+    return render_template("index.html", events=data)
+
+
+@app.route("/api/status")
+def api_status():
+    with status_lock:
+        data = dict(events_status)
+    return jsonify(data)
+
+
+@app.route("/debug/<event_id>")
+def debug_page(event_id):
+    html = raw_debug_cache.get(event_id)
+    if html is None:
+        return f"還沒有 {event_id} 的快取資料,等下一輪背景檢查跑完再試。", 404
+    from flask import Response
+    return Response(html, mimetype="text/plain; charset=utf-8")
+
+
+if os.environ.get("WERKZEUG_RUN_MAIN") != "true":
+    threading.Thread(target=background_worker, daemon=True).start()
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
+    
