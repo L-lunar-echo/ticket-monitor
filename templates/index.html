@@ -21,11 +21,10 @@
         .event-name { font-size: 16px; font-weight: bold; color: #3c4043; }
         .event-meta { font-size: 12px; color: #70757a; margin-top: 4px; }
         
-        /* 票況顏色 */
+        /* 簡化版票況顏色：紅色=有票，灰色=沒票 */
         .status-badge { padding: 4px 12px; border-radius: 16px; font-size: 12px; font-weight: bold; }
-        .status-abundant { background-color: #e6f4ea; color: #1e8e3e; border: 1px solid #cce8cf; } /* 大量：綠色 */
-        .status-few { background-color: #fce8e6; color: #d93025; border: 1px solid #f5c2c1; }      /* 少量：紅色 */
-        .status-sold-out { background-color: #f1f3f4; color: #5f6368; border: 1px solid #e8eaed; } /* 售完：灰色 */
+        .status-available { background-color: #fce8e6; color: #d93025; border: 1px solid #f5c2c1; } /* 紅色 */
+        .status-sold-out { background-color: #f1f3f4; color: #5f6368; border: 1px solid #e8eaed; } /* 灰色 */
         
         .event-details { display: none; padding: 15px; border-top: 1px solid #f1f3f4; background: #fafafa; }
         .notification-btn { background: #1a73e8; color: white; border: none; padding: 10px 20px; border-radius: 20px; cursor: pointer; font-weight: bold; }
@@ -35,8 +34,8 @@
 
     <div style="margin-bottom: 20px;">
         <h1>꒰ 演唱會釋票監控系統 ꒱</h1>
-        <div class="subtitle">🪄 即時監控票池狀態，請先點擊右方［開啟通知 💌］鍵，再勾選下方監控場次‪₊˚⊹ ʚɞ</div>
-        <div class="author">網站作者：Threads/@___lunarecho</div>
+        <div class="subtitle">🪄 即時監控票池狀態，請先點擊［開啟通知 💌］鍵，再勾選下方監控場次‪ ₊˚⊹ ʚɞ</div>
+        <div class="author">網站作者：<a href="https://www.threads.net/@___lunarecho" target="_blank" style="color: #1a73e8; text-decoration: none; font-weight: bold;">Threads/@___lunarecho</a></div>
         <button class="notification-btn" onclick="requestNotificationPermission()">🔔 開啟通知 💌</button>
     </div>
 
@@ -60,18 +59,13 @@
             </div>
             <div class="event-details" id="details-{{ ev_id }}">
                 <a href="{{ ev.url }}" target="_blank" style="color: #1a73e8; font-weight: bold;">➡️ 前往購票頁面</a>
-                <ul style="padding-left: 20px; font-size: 14px; color: #555;">
-                    {% for ticket, status in ev.tickets.items() %}
-                    <li>{{ ticket }}: <b>{{ status }}</b></li>
-                    {% endfor %}
-                </ul>
             </div>
         </div>
         {% endfor %}
     </div>
 
     <div style="text-align: center; margin-top: 30px; padding: 15px; color: #70757a; font-size: 13px; border-top: 1px dashed #ccc;">
-        ˚ʚ♡ɞ˚ 偵測數據有些微延遲，搶票請以購票頁面實際狀況為準唷！
+        ˚ʚ♡ɞ˚ 偵測數據有些微延遲，搶票請以購票頁面實際狀況為準！
     </div>
 
     <script>
@@ -103,6 +97,27 @@
                 new Notification("🔕 監控已關閉", { body: `已取消（${name}）的釋票提醒。` });
             }
         }
+
+        // 自動更新狀態與顏色邏輯
+        setInterval(() => {
+            fetch('/api/status')
+            .then(r => r.json())
+            .then(data => {
+                for (let id in data) {
+                    let ev = data[id];
+                    let badge = document.getElementById('badge-' + id);
+                    let hasTicket = Object.values(ev.tickets).includes("有票");
+                    
+                    if (hasTicket) {
+                        badge.innerText = "有票！";
+                        badge.className = "status-badge status-available"; 
+                    } else {
+                        badge.innerText = "已售完";
+                        badge.className = "status-badge status-sold-out";
+                    }
+                }
+            });
+        }, 60000);
     </script>
 </body>
 </html>
