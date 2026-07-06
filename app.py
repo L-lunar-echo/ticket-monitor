@@ -16,7 +16,7 @@ import requests
 from bs4 import BeautifulSoup
 from flask import Flask, render_template, jsonify
 
-# ---------- 1. 場次設定（已修正為 FTISLAND 官方場次名稱） ----------
+# ---------- 1. 場次設定（所有活動名稱已全部更新為官方正式格式） ----------
 EVENTS = [
     {
         "id": "donghae-khh-0725",
@@ -42,6 +42,25 @@ EVENTS = [
         "name": "2026 FTISLAND TOUR 0 — XIX — III ‘FaTe’ in KAOHSIUNG",   
         "url": "https://orders.ibon.com.tw/application/UTK02/UTK0201_000.aspx?PERFORMANCE_ID=B0BS5PP2&PRODUCT_ID=B0BQXQ8M&strItem=WEB%E7%B6%B2%E7%AB%99%E5%85%A5%E5%8F%A31",
     },
+    # ---- BTS 高雄場三場次 ----
+    {
+        "id": "tixcraft-bts-1119",
+        "platform": "tixcraft",
+        "name": "[11/19] BTS WORLD TOUR ’ARIRANG’ IN KAOHSIUNG",
+        "url": "https://tixcraft.com/ticket/area/26_btskns/22510",
+    },
+    {
+        "id": "tixcraft-bts-1121",
+        "platform": "tixcraft",
+        "name": "[11/21] BTS WORLD TOUR ’ARIRANG’ IN KAOHSIUNG",
+        "url": "https://tixcraft.com/ticket/area/26_btskns/22763",
+    },
+    {
+        "id": "tixcraft-bts-1122",
+        "platform": "tixcraft",
+        "name": "[11/22] BTS WORLD TOUR ’ARIRANG’ IN KAOHSIUNG",
+        "url": "https://tixcraft.com/ticket/area/26_btskns/22764",
+    },
 ]
 
 # 間隔時間
@@ -64,6 +83,83 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 events_status = {}
 status_lock = threading.Lock()
 raw_debug_cache = {}
+
+# ---------- 2. BTS 專用共用雙層防禦備援清單 ----------
+BTS_FALLBACK_SEATS = {
+    "A1區 (NT$9380)": "售完", "A2區 (NT$9380)": "售完", "A3區 (NT$9380)": "售完", "A5區 (NT$9380)": "售完",
+    "A6區 (NT$9380)": "售完", "A7區 (NT$9380)": "售完", "R2區 (NT$9380)": "售完", "R3區 (NT$9380)": "售完",
+    "R4區 (NT$9380)": "售完", "R5區 (NT$9380)": "售完", "R6區 (NT$9380)": "售完", "M1區 (NT$9380)": "售完",
+    "M2區 (NT$9380)": "售完", "M3區 (NT$9380)": "售完", "M5區 (NT$9380)": "售完", "M6區 (NT$9380)": "售完",
+    "M7區 (NT$9380)": "售完", "Y2區 (NT$9380)": "售完", "Y3區 (NT$9380)": "售完", "Y4區 (NT$9380)": "售完",
+    "Y5區 (NT$9380)": "售完", "Y6區 (NT$9380)": "售完",
+    
+    "A4區 (NT$7980)": "售完", "A5區 (NT$7980)": "售完", "A6區 (NT$7980)": "售完", "A7區 (NT$7980)": "售完",
+    "A8區 (NT$7980)": "售完", "R1區 (NT$7980)": "售完", "R7區 (NT$7980)": "售完", "R8區 (NT$7980)": "售完",
+    "R9區 (NT$7980)": "售完", "R10區 (NT$7980)": "售完", "R11區 (NT$7980)": "售完", "R12區 (NT$7980)": "售完",
+    "R13區 (NT$7980)": "售完", "R14區 (NT$7980)": "售完", "M4區 (NT$7980)": "售完", "M5區 (NT$7980)": "售完",
+    "M6區 (NT$7980)": "售完", "M7區 (NT$7980)": "售完", "M8區 (NT$7980)": "售完", "Y1區 (NT$7980)": "售完",
+    "Y7區 (NT$7980)": "售完", "Y8區 (NT$7980)": "售完", "Y9區 (NT$7980)": "售完", "Y10區 (NT$7980)": "售完",
+    "Y11區 (NT$7980)": "售完", "Y12區 (NT$7980)": "售完", "Y13區 (NT$7980)": "售完", "Y14區 (NT$7980)": "售完",
+    
+    "1樓C03區 (NT$7980)": "售完", "1樓C04區 (NT$7980)": "售完", "1樓C05區 (NT$7980)": "售完", "1樓C06區 (NT$7980)": "售完",
+    "1樓C07區 (NT$7980)": "售完", "1樓C08區 (NT$7980)": "售完", "1樓C09區 (NT$7980)": "售完", "1樓G03區 (NT$7980)": "售完",
+    "1樓G04區 (NT$7980)": "售完", "1樓G05區 (NT$7980)": "售完", "1樓G06區 (NT$7980)": "售完", "1樓G07區 (NT$7980)": "售完",
+    "1樓G08區 (NT$7980)": "售完", "1樓G09區 (NT$7980)": "售完", "1樓G10區 (NT$7980)": "售完", "1樓G11區 (NT$7980)": "售完",
+    
+    "A9區 (NT$6980)": "售完", "A10區 (NT$6980)": "售完", "A11區 (NT$6980)": "售完", "A12區 (NT$6980)": "售完", "A13區 (NT$6980)": "售完",
+    "M9區 (NT$6980)": "售完", "M10區 (NT$6980)": "售完", "M11區 (NT$6980)": "售完", "M12區 (NT$6980)": "售完", "M13區 (NT$6980)": "售完",
+    
+    "1樓C02區 (NT$6980)": "售完", "1樓C10區 (NT$6980)": "售完", "1樓G02區 (NT$6980)": "售完", "1樓G03區 (NT$6980)": "售完",
+    "1樓G04區 (NT$6980)": "售完", "1樓G05區 (NT$6980)": "售完", "1樓G06區 (NT$6980)": "售完", "1樓G07區 (NT$6980)": "售完",
+    "1樓G08區 (NT$6980)": "售完", "1樓G09區 (NT$6980)": "售完", "1樓G10區 (NT$6980)": "售完", "1樓G11區 (NT$6980)": "售完",
+    "1樓G12區 (NT$6980)": "售完", "1樓V04區 (NT$6980)": "售完", "1樓V05區 (NT$6980)": "售完", "1樓V06區 (NT$6980)": "售完",
+    "1樓V07區 (NT$6980)": "售完", "1樓V08區 (NT$6980)": "售完", "1樓V09區 (NT$6980)": "售完",
+    
+    "1樓A01區 (NT$5980)": "售完", "1樓A02區 (NT$5980)": "售完", "1樓B03區 (NT$5980)": "售完", "1樓C01區 (NT$5980)": "售完",
+    "1樓C11區 (NT$5980)": "售完", "1樓D01區 (NT$5980)": "售完", "1樓E02區 (NT$5980)": "售完", "1樓E03區 (NT$5980)": "售完",
+    "1樓E04區 (NT$5980)": "售完", "1樓E05區 (NT$5980)": "售完", "1樓E06區 (NT$5980)": "售完", "1樓E07區 (NT$5980)": "售完",
+    "1樓E08區 (NT$5980)": "售完", "1樓E09區 (NT$5980)": "售完", "1樓E10區 (NT$5980)": "售完", "1樓E11區 (NT$5980)": "售完",
+    "1樓E12區 (NT$5980)": "售完", "1樓E13區 (NT$5980)": "售完", "1樓E14區 (NT$5980)": "售完", "1樓F03區 (NT$5980)": "售完",
+    "1樓G01區 (NT$5980)": "售完", "1樓G13區 (NT$5980)": "售完", "1樓H01區 (NT$5980)": "售完", "1樓I03區 (NT$5980)": "售完",
+    "1樓I04區 (NT$5980)": "售完", "1樓V01區 (NT$5980)": "售完", "1樓V02區 (NT$5980)": "售完", "1樓V03區 (NT$5980)": "售完",
+    "1樓V10區 (NT$5980)": "售完", "1樓V11區 (NT$5980)": "售完", "1樓V12區 (NT$5980)": "售完",
+    
+    "2樓C13區 (NT$5980)": "售完", "2樓C14區 (NT$5980)": "售完", "2樓C15區 (NT$5980)": "售完", "2樓C16區 (NT$5980)": "售完",
+    "2樓C17區 (NT$5980)": "售完", "2樓C18區 (NT$5980)": "售完", "2樓C19區 (NT$5980)": "售完", "2樓C20區 (NT$5980)": "售完",
+    "2樓C21區 (NT$5980)": "售完", "2樓C22區 (NT$5980)": "售完", "2樓C23區 (NT$5980)": "售完", "2樓C24區 (NT$5980)": "售完",
+    "2樓G16區 (NT$5980)": "售完", "2樓G17區 (NT$5980)": "售完", "2樓G18區 (NT$5980)": "售完", "2樓G19區 (NT$5980)": "售完",
+    "2樓G20區 (NT$5980)": "售完", "2樓G21區 (NT$5980)": "售完", "2樓G22區 (NT$5980)": "售完", "2樓G23區 (NT$5980)": "售完",
+    "2樓G24區 (NT$5980)": "售完", "2樓G25區 (NT$5980)": "售完", "2樓G26區 (NT$5980)": "售完",
+    
+    "1樓A03區 (NT$4980)": "售完", "1樓B03區 (NT$4980)": "售完", "1樓D02區 (NT$4980)": "售完", "1樓E01區 (NT$4980)": "售完",
+    "1樓E15區 (NT$4980)": "售完", "1樓F02區 (NT$4980)": "售完", "1樓H02區 (NT$4980)": "售完", "1樓I02區 (NT$4980)": "售完",
+    
+    "2樓B08區 (NT$4980)": "售完", "2樓C12區 (NT$4980)": "售完", "2樓C13區 (NT$4980)": "售完", "2樓C25區 (NT$4980)": "售完",
+    "2樓D05區 (NT$4980)": "售完", "2樓D06區 (NT$4980)": "售完", "2樓E19區 (NT$4980)": "售完", "2樓E20區 (NT$4980)": "售完",
+    "2樓E21區 (NT$4980)": "售完", "2樓E22區 (NT$4980)": "售完", "2樓E23區 (NT$4980)": "售完", "2樓E24區 (NT$4980)": "售完",
+    "2樓E25區 (NT$4980)": "售完", "2樓E26區 (NT$4980)": "售完", "2樓E27區 (NT$4980)": "售完", "2樓E28區 (NT$4980)": "售完",
+    "2樓E29區 (NT$4980)": "售完", "2樓E30區 (NT$4980)": "售完", "2樓E31區 (NT$4980)": "售完", "2樓F07區 (NT$4980)": "售完",
+    "2樓G14區 (NT$4980)": "售完", "2樓G15區 (NT$4980)": "售完", "2樓G27區 (NT$4980)": "售完",
+    
+    "1樓B01區 (NT$3980)": "售完", "1樓B02區 (NT$3980)": "售完", "1樓D02區 (NT$3980)": "售完", "1樓D03區 (NT$3980)": "售完",
+    "1樓D04區 (NT$3980)": "售完", "1樓E06區 (NT$3980)": "售完", "1樓E07區 (NT$3980)": "售完", "1樓E08區 (NT$3980)": "售完",
+    "1樓E09區 (NT$3980)": "售完", "1樓E10區 (NT$3980)": "售完", "1樓E16區 (NT$3980)": "售完", "1樓F01區 (NT$3980)": "售完",
+    "1樓H03區 (NT$3980)": "售完", "1樓I01區 (NT$3980)": "售完",
+    
+    "2樓B07區 (NT$3980)": "售完", "2樓D07區 (NT$3980)": "售完", "2樓D09區 (NT$3980)": "售完", "2樓E17區 (NT$3980)": "售完",
+    "2樓E18區 (NT$3980)": "售完", "2樓E32區 (NT$3980)": "售完", "2樓F06區 (NT$3980)": "售完", "2樓H04區 (NT$3980)": "售完",
+    "2樓H05區 (NT$3980)": "售完", "2樓H06區 (NT$3980)": "售完",
+    
+    "2樓B04區 (NT$2980)": "售完", "2樓B05區 (NT$2980)": "售完", "2樓B06區 (NT$2980)": "售完", "2樓D07區 (NT$2980)": "售完",
+    "2樓D08區 (NT$2980)": "售完", "2樓D09區 (NT$2980)": "售完", "2樓E33區 (NT$2980)": "售完", "2樓F04區 (NT$2980)": "售完",
+    "2樓F05區 (NT$2980)": "售完", "2樓H06區 (NT$2980)": "售完", "2樓H07區 (NT$2980)": "售完", "2樓H08區 (NT$2980)": "售完",
+    
+    "1樓G05區身障優惠區": "售完", "1樓G06區身障優惠區": "售完", "1樓G07區身障優惠區": "售完", "1樓G08區身障優惠區": "售完",
+    "1樓G09區身障優惠區": "售完", "1樓E02區身障優惠區": "售完", "1樓E03區身障優惠區": "售完", "1樓E04區身障優惠區": "售完",
+    "1樓E05區身障優惠區": "售完", "1樓E06區身障優惠區": "售完", "1樓E07區身障優惠區": "售完", "1樓E08區身障優惠區": "售完",
+    "1樓E09區身障優惠區": "售完", "1樓E10區身障優惠區": "售完", "1樓E11區身障優惠區": "售完", "1樓E12區身障優惠區": "售完",
+    "1樓E13區身障優惠區": "售完", "1樓E14區身障優惠區": "售完"
+}
 
 
 def check_kktix(url: str, event_id: str = None) -> dict:
@@ -157,6 +253,9 @@ def check_tixcraft(url: str, event_id: str = None) -> dict:
     except Exception as e:
         logging.error(f"拓元 Playwright 執行失敗: {e}")
 
+    if "22510" in url or "22763" in url or "22764" in url:
+        return dict(BTS_FALLBACK_SEATS)
+
     return {
         "VIP座位區 (NT$4800)": "售完", "GA站席 (NT$2800)": "售完",
         "看台座位區 (NT$2800)": "售完", "看台座位區 (NT$2300)": "售完"
@@ -201,7 +300,6 @@ def check_ibon(url: str, event_id: str = None) -> dict:
     except Exception as e:
         logging.error(f"ibon Playwright 執行失敗: {e}")
 
-    # 備援清單
     return {
         "特A區 (NT$6580)": "售完", "特B區 (NT$6580)": "售完", "2樓2B區 (NT$6580)": "售完",
         "2樓2C區 (NT$6580)": "售完", "2樓2D區 (NT$6580)": "售完", "特A區 (NT$5880)": "售完",
@@ -275,17 +373,20 @@ def debug_page(event_id):
     return Response(html, mimetype="text/plain; charset=utf-8")
 
 
-# ---------- 3. 初始值區塊（名稱同步更新） ----------
+# ---------- 3. 初始值區塊 ----------
 events_status["donghae-khh-0725"] = {
-    "name": "DONGHAE 高雄場 7/25", "url": "https://daydreamerstudio.kktix.cc/events/b14fcf04",
+    "name": "【7/25場次】2026 DONGHAE 1ST SOLO CONCERT TOUR [ALIVE] in KAOHSIUNG", 
+    "url": "https://daydreamerstudio.kktix.cc/events/b14fcf04",
     "updated_at": "系統初始化中...", "tickets": {"載入中...": "檢查中"}, "error": None
 }
 events_status["donghae-khh-0726"] = {
-    "name": "DONGHAE 高雄場 7/26", "url": "https://daydreamerstudio.kktix.cc/events/cd3b83be",
+    "name": "【7/26場次】2026 DONGHAE 1ST SOLO CONCERT TOUR [ALIVE] in KAOHSIUNG", 
+    "url": "https://daydreamerstudio.kktix.cc/events/cd3b83be",
     "updated_at": "系統初始化中...", "tickets": {"載入中...": "檢查中"}, "error": None
 }
 events_status["henry-moodie-khh"] = {
-    "name": "Henry Moodie 高雄場", "url": "https://tixcraft.com/ticket/area/26_henry/22868",
+    "name": "Henry Moodie：Mood Swings World Tour in Kaohsiung", 
+    "url": "https://tixcraft.com/ticket/area/26_henry/22868",
     "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     "tickets": {
         "VIP座位區 (NT$4800)": "售完", "GA站席 (NT$2800)": "售完",
@@ -293,7 +394,6 @@ events_status["henry-moodie-khh"] = {
     },
     "error": None
 }
-# FTISLAND 初始值快取
 events_status["ibon-current-event"] = {
     "name": "2026 FTISLAND TOUR 0 — XIX — III ‘FaTe’ in KAOHSIUNG",
     "url": "https://orders.ibon.com.tw/application/UTK02/UTK0201_000.aspx?PERFORMANCE_ID=B0BS5PP2&PRODUCT_ID=B0BQXQ8M&strItem=WEB%E7%B6%B2%E7%AB%99%E5%85%A5%E5%8F%A31",
@@ -308,6 +408,20 @@ events_status["ibon-current-event"] = {
         "2樓2E區 (NT$3880)": "售完"
     },
     "error": None
+}
+
+# --- BTS 三場次的初始值預設快取 ---
+events_status["tixcraft-bts-1119"] = {
+    "name": "[11/19] BTS WORLD TOUR ’ARIRANG’ IN KAOHSIUNG", "url": "https://tixcraft.com/ticket/area/26_btskns/22510",
+    "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "tickets": dict(BTS_FALLBACK_SEATS), "error": None
+}
+events_status["tixcraft-bts-1121"] = {
+    "name": "[11/21] BTS WORLD TOUR ’ARIRANG’ IN KAOHSIUNG", "url": "https://tixcraft.com/ticket/area/26_btskns/22763",
+    "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "tickets": dict(BTS_FALLBACK_SEATS), "error": None
+}
+events_status["tixcraft-bts-1122"] = {
+    "name": "[11/22] BTS WORLD TOUR ’ARIRANG’ IN KAOHSIUNG", "url": "https://tixcraft.com/ticket/area/26_btskns/22764",
+    "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "tickets": dict(BTS_FALLBACK_SEATS), "error": None
 }
 
 
