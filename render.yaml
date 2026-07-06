@@ -1,7 +1,6 @@
 services:
   - type: web
     name: ticket-monitor
-    env: python
+    env: docker
     plan: free
-    buildCommand: pip install -r requirements.txt && playwright install --with-deps chromium
-    startCommand: gunicorn app:app --workers 1 --threads 4 --timeout 120
+    dockerfilePath: ./Dockerfile
