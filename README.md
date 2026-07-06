@@ -17,17 +17,19 @@
    - 注意 `templates/index.html` 要維持在 `templates` 資料夾裡面,上傳時網頁會自動幫你建資料夾結構
 5. 按 `Commit changes`
 
-## 第二步:部署到 Render.com
+## 第二步:部署到 Render.com(Docker 版)
+
+因為拓元監控需要瀏覽器環境,這個專案改用 Docker 部署,不用自己裝任何東西,Render 會自動處理:
 
 1. 到 https://render.com 註冊帳號,選擇「用 GitHub 登入」最快
 2. 登入後點 `New` -> `Web Service`
 3. 選擇剛剛建立的 `ticket-monitor` repo,授權 Render 存取
-4. Render 會自動偵測到 `render.yaml`,設定會自動帶入(如果沒有自動偵測,手動填):
-   - Build Command: `pip install -r requirements.txt`
-   - Start Command: `gunicorn app:app --workers 1 --threads 4 --timeout 120`
+4. Render 偵測到 repo 裡有 `Dockerfile`,通常會自動把 **Environment / Language** 設成 `Docker`,不需要再填 Build Command / Start Command(這些都寫在 `Dockerfile` 裡了)
+   - 如果沒自動偵測到,手動把 Environment 選單改成 `Docker`
 5. Instance Type 選 `Free`
-6. 點 `Create Web Service`,等 3~5 分鐘建置完成
-7. 完成後 Render 會給你一個網址,例如 `https://ticket-monitor-xxxx.onrender.com`,打開就能看到票況頁面
+6. 點 `Create Web Service`
+7. **這次 Build 時間會比較久(10 分鐘以上都正常)**,因為要下載一個內建瀏覽器的完整映像檔,體積比較大,耐心等
+8. 完成後 Render 會給你一個網址,例如 `https://ticket-monitor-xxxx.onrender.com`,打開就能看到票況頁面
 
 ## 重要限制(新手一定要知道)
 
