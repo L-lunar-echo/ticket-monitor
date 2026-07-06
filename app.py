@@ -1,0 +1,192 @@
+"""
+演唱會釋票監控網站
+==================
+背景執行緒每隔一段時間檢查票況,結果存進記憶體(events_status),
+所有訪客看到的都是同一份快取結果,不會讓每個訪客各自觸發一次爬蟲請求。
+
+部署到 Render.com 的步驟寫在 README.md 裡。
+"""
+
+import os
+import time
+import random
+import logging
+import threading
+from datetime import datetime
+
+import requests
+from bs4 import BeautifulSoup
+from flask import Flask, render_template, jsonify
+
+# ---------- 場次設定 ----------
+# 之後要加拓元/ibon,就在這裡加一筆,並在 CHECKERS 裡對應到解析函式
+EVENTS = [
+    {
+        "id": "donghae-khh-0725",
+        "platform": "kktix",
+        "name": "DONGHAE 高雄場 7/25",
+        # 注意: 用不含 registrations/new 的活動介紹頁,那個購票頁需要先建立訂購 session
+        "url": "https://daydreamerstudio.kktix.cc/events/b14fcf04",
+    },
+    {
+        "id": "henry-moodie-khh",
+        "platform": "tixcraft",
+        "name": "Henry Moodie 高雄場",
+        "url": "https://tixcraft.com/ticket/area/26_henry/22868",
+    },
+]
+
+# 拓元用 Playwright 較耗資源,間隔拉長一點,對伺服器跟對方網站都比較友善
+CHECK_INTERVAL_MIN = 120
+CHECK_INTERVAL_MAX = 180
+
+HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+    "Accept-Language": "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7",
+    "Referer": "https://kktix.com/",
+    "Connection": "keep-alive",
+}
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+
+# 全站共用的快取狀態: { event_id: {"name":..., "url":..., "updated_at":..., "tickets": {票種: 狀態}} }
+events_status = {}
+status_lock = threading.Lock()
+
+
+def check_kktix(url: str) -> dict:
+    """檢查 KKTIX 場次頁面,回傳 {票種名稱: '有票' or '售完'}"""
+    resp = requests.get(url, headers=HEADERS, timeout=15)
+    resp.raise_for_status()
+    soup = BeautifulSoup(resp.text, "html.parser")
+
+    result = {}
+    tickets = soup.select("tr.ticket-unit, div.ticket-unit, li.ticket-unit")
+    if not tickets:
+        page_text = soup.get_text()
+        status = "售完" if "已售完" in page_text else "未知(需確認頁面結構)"
+        result["整體頁面"] = status
+        return result
+
+    for t in tickets:
+        name_tag = t.select_one(".ticket-name, .name, td:first-child")
+        name = name_tag.get_text(strip=True) if name_tag else "未命名票種"
+        text = t.get_text()
+        status = "售完" if ("已售完" in text or "SOLD OUT" in text.upper()) else "有票"
+        result[name] = status
+    return result
+
+
+def check_tixcraft(url: str) -> dict:
+    """
+    用 Playwright 開一個真的無頭瀏覽器讀取拓元頁面。
+    注意: 拓元有 Cloudflare 防護,這是誠實的基本嘗試,不保證能穩定通過;
+    若持續失敗代表被判定為機器人,不會在這裡做進一步的偽裝/繞過處理。
+    """
+    from playwright.sync_api import sync_playwright
+
+    result = {}
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True, args=["--no-sandbox"])
+        page = browser.new_page(
+            user_agent=HEADERS["User-Agent"],
+            locale="zh-TW",
+        )
+        page.goto(url, timeout=30000, wait_until="domcontentloaded")
+        page.wait_for_timeout(4000)  # 等待可能的 JS 渲染 / Cloudflare 檢查頁
+        content = page.content()
+        title = page.title()
+        browser.close()
+
+    soup = BeautifulSoup(content, "html.parser")
+
+    # 常見的 Cloudflare 檢查頁會有這些關鍵字或標題
+    if "Just a moment" in title or "Attention Required" in content or "cf-browser-verification" in content:
+        result["整體頁面"] = "被 Cloudflare 阻擋(未通過機器人驗證)"
+        return result
+
+    rows = soup.select("table#ticketPriceCategory tr, div.zone-item, li.zone-item")
+    if not rows:
+        page_text = soup.get_text()
+        if "已售完" in page_text or "SOLD OUT" in page_text.upper():
+            result["整體頁面"] = "售完"
+        else:
+            result["整體頁面"] = "未知(頁面結構與預期不同,需人工確認)"
+        return result
+
+    for row in rows:
+        text = row.get_text(strip=True)
+        if not text:
+            continue
+        status = "售完" if ("已售完" in text or "無法選購" in text) else "有票"
+        result[text[:20]] = status
+
+    return result
+
+
+CHECKERS = {
+    "kktix": check_kktix,
+    "tixcraft": check_tixcraft,
+    # "ibon": check_ibon,           # 之後找到 API 路徑再補上
+}
+
+
+def background_worker():
+    """背景執行緒: 定期輪詢所有場次並更新 events_status"""
+    while True:
+        for ev in EVENTS:
+            checker = CHECKERS.get(ev["platform"])
+            if checker is None:
+                continue
+            try:
+                tickets = checker(ev["url"])
+                with status_lock:
+                    events_status[ev["id"]] = {
+                        "name": ev["name"],
+                        "url": ev["url"],
+                        "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "tickets": tickets,
+                        "error": None,
+                    }
+                logging.info(f"[更新成功] {ev['name']}: {tickets}")
+            except Exception as e:
+                with status_lock:
+                    prev = events_status.get(ev["id"], {})
+                    prev["error"] = str(e)
+                    prev["name"] = ev["name"]
+                    prev["url"] = ev["url"]
+                    events_status[ev["id"]] = prev
+                logging.error(f"[檢查失敗] {ev['name']}: {e}")
+
+        time.sleep(random.randint(CHECK_INTERVAL_MIN, CHECK_INTERVAL_MAX))
+
+
+app = Flask(__name__)
+
+
+@app.route("/")
+def index():
+    with status_lock:
+        data = dict(events_status)
+    return render_template("index.html", events=data)
+
+
+@app.route("/api/status")
+def api_status():
+    """給前端 JS 或其他程式輪詢用的 JSON API"""
+    with status_lock:
+        data = dict(events_status)
+    return jsonify(data)
+
+
+# 啟動背景執行緒(避免 Flask debug reloader 啟動兩次背景執行緒)
+if os.environ.get("WERKZEUG_RUN_MAIN") != "true":
+    threading.Thread(target=background_worker, daemon=True).start()
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
