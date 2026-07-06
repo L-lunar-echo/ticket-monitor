@@ -4,28 +4,31 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>演唱會釋票監控系統</title>
+    <link href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@400;500;700&display=swap" rel="stylesheet">
     <style>
         :root {
-            --bg-color: #f7f5f3;
-            --card-bg: #ffffff;
-            --text-main: #333333;
-            --accent-color: #8c7b75;
-            --border-color: #e5e0dc;
+            --bg-color: #f7f5f3;      /* 韓系淺灰底色 */
+            --card-bg: #ffffff;       /* 純白卡片 */
+            --text-main: #333333;     /* 深灰文字 */
+            --accent-color: #8c7b75;  /* 暖棕色 */
+            --border-color: #e5e0dc;  /* 淺棕灰邊框 */
         }
 
         body { 
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            font-family: 'Zen Maru Gothic', sans-serif; 
             max-width: 600px; 
             margin: 0 auto; 
             padding: 20px; 
+            /* 灰底白色波點背景設計 */
             background-color: var(--bg-color); 
             background-image: radial-gradient(#ffffff 20%, transparent 20%);
-            background-size: 25px 25px; 
+            background-size: 30px 30px; 
             color: var(--text-main);
-            font-size: 14px; /* 調小字體，確保排版穩定 */
+            font-size: 14px; 
+            font-weight: 500;
         }
 
-        h1 { color: #1a1a1a; margin-bottom: 10px; text-align: center; font-size: 22px; font-weight: 700; }
+        h1 { color: #1a1a1a; margin-bottom: 10px; text-align: center; font-size: 24px; font-weight: 700; }
         .subtitle { color: #555; margin-bottom: 20px; font-size: 13px; text-align: center; line-height: 1.4; font-weight: 500; }
         
         .author { font-size: 12px; color: #777; margin-bottom: 20px; text-align: center; font-weight: 500; }
@@ -111,7 +114,48 @@
                 btn.innerText = '🔼 收起完整票池狀況';
             }
         }
-        // 其餘 JavaScript 邏輯保持原樣即可...
+
+        function requestNotificationPermission() {
+            Notification.requestPermission().then(p => {
+                if(p === 'granted') { new Notification("📦 系統測試", { body: "通知功能已啟用，請勾選各場次以開始進行監控！" }); }
+                else { alert("請允許通知權限！"); }
+            });
+        }
+
+        function handleCheckboxChange(id, name) {
+            const cb = document.getElementById('notify-toggle-' + id);
+            if (Notification.permission !== 'granted') {
+                alert("請先開啟通知權限！");
+                cb.checked = false;
+                return;
+            }
+            if (cb.checked) {
+                new Notification("🔔 監控已開啟", { body: `已訂閱（${name}）的釋票提醒。` });
+            } else {
+                new Notification("🔕 監控已關閉", { body: `已取消（${name}）的釋票提醒。` });
+            }
+        }
+
+        setInterval(() => {
+            fetch('/api/status')
+            .then(r => r.json())
+            .then(data => {
+                for (let id in data) {
+                    let ev = data[id];
+                    let badge = document.getElementById('badge-' + id);
+                    let hasTicket = Object.values(ev.tickets).includes("有票");
+                    if (badge) {
+                        if (hasTicket) {
+                            badge.innerText = "還有票🎫";
+                            badge.className = "status-badge status-available";
+                        } else {
+                            badge.innerText = "已售完🈳";
+                            badge.className = "status-badge status-sold-out";
+                        }
+                    }
+                }
+            });
+        }, 60000);
     </script>
 </body>
 </html>
