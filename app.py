@@ -21,25 +21,25 @@ EVENTS = [
     {
         "id": "donghae-khh-0725",
         "platform": "kktix",
-        "name": "DONGHAE 高雄場 7/25",
+        "name": "【7/25場次】2026 DONGHAE 1ST SOLO CONCERT TOUR [ALIVE] in KAOHSIUNG",
         "url": "https://daydreamerstudio.kktix.cc/events/b14fcf04",
     },
     {
         "id": "donghae-khh-0726",
         "platform": "kktix",
-        "name": "DONGHAE 高雄場 7/26",
+        "name": "【7/26場次】2026 DONGHAE 1ST SOLO CONCERT TOUR [ALIVE] in KAOHSIUNG",
         "url": "https://daydreamerstudio.kktix.cc/events/cd3b83be",
     },
     {
         "id": "henry-moodie-khh",
         "platform": "tixcraft",
-        "name": "Henry Moodie 高雄場",
+        "name": "Henry Moodie：Mood Swings World Tour in Kaohsiung",
         "url": "https://tixcraft.com/ticket/area/26_henry/22868",
     },
     {
         "id": "ibon-current-event",  
         "platform": "ibon",         
-        "name": "ibon 監控場次",   
+        "name": "2026 FTISLAND TOUR 0 — XIX — III ‘FaTe’ in KAOHSIUNG",   
         "url": "https://orders.ibon.com.tw/application/UTK02/UTK0201_000.aspx?PERFORMANCE_ID=B0BS5PP2&PRODUCT_ID=B0BQXQ8M&strItem=WEB%E7%B6%B2%E7%AB%99%E5%85%A5%E5%8F%A31",
     },
 ]
