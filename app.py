@@ -21,13 +21,13 @@ EVENTS = [
     {
         "id": "donghae-khh-0725",
         "platform": "kktix",
-        "name": "【7/25場次】2026 DONGHAE 1ST SOLO CONCERT TOUR [ALIVE] in KAOHSIUNG",
+        "name": "[7/25] DONGHAE 1ST SOLO CONCERT TOUR [ALIVE] in KAOHSIUNG",
         "url": "https://daydreamerstudio.kktix.cc/events/b14fcf04",
     },
     {
         "id": "donghae-khh-0726",
         "platform": "kktix",
-        "name": "【7/26場次】2026 DONGHAE 1ST SOLO CONCERT TOUR [ALIVE] in KAOHSIUNG",
+        "name": "[7/26] DONGHAE 1ST SOLO CONCERT TOUR [ALIVE] in KAOHSIUNG",
         "url": "https://daydreamerstudio.kktix.cc/events/cd3b83be",
     },
     {
