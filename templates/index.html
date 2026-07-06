@@ -7,7 +7,9 @@
     <style>
         body { font-family: 'Helvetica Neue', Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; background-color: #f4f6f9; }
         h1 { color: #202124; margin-bottom: 5px; }
-        .subtitle { color: #5f6368; margin-bottom: 20px; font-size: 14px; }
+        .subtitle { color: #5f6368; margin-bottom: 20px; font-size: 14px; line-height: 1.6; }
+        .author { font-size: 12px; color: #999; margin-bottom: 20px; }
+        
         .event-card { background: white; border-radius: 12px; margin-bottom: 15px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); border: 1px solid #dadce0; }
         .event-header { padding: 15px; display: flex; align-items: center; }
         
@@ -19,9 +21,11 @@
         .event-name { font-size: 16px; font-weight: bold; color: #3c4043; }
         .event-meta { font-size: 12px; color: #70757a; margin-top: 4px; }
         
+        /* 票況顏色 */
         .status-badge { padding: 4px 12px; border-radius: 16px; font-size: 12px; font-weight: bold; }
-        .status-available { background-color: #e6f4ea; color: #1e8e3e; }
-        .status-all-sold { background-color: #f1f3f4; color: #5f6368; }
+        .status-abundant { background-color: #e6f4ea; color: #1e8e3e; border: 1px solid #cce8cf; } /* 大量：綠色 */
+        .status-few { background-color: #fce8e6; color: #d93025; border: 1px solid #f5c2c1; }      /* 少量：紅色 */
+        .status-sold-out { background-color: #f1f3f4; color: #5f6368; border: 1px solid #e8eaed; } /* 售完：灰色 */
         
         .event-details { display: none; padding: 15px; border-top: 1px solid #f1f3f4; background: #fafafa; }
         .notification-btn { background: #1a73e8; color: white; border: none; padding: 10px 20px; border-radius: 20px; cursor: pointer; font-weight: bold; }
@@ -29,12 +33,11 @@
 </head>
 <body>
 
-    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-        <div>
-            <h1>演唱會釋票監控系統</h1>
-            <div class="subtitle">即時監控票池狀態，釋票時自動跳出通知。</div>
-        </div>
-        <button class="notification-btn" onclick="requestNotificationPermission()">🔔 開啟通知</button>
+    <div style="margin-bottom: 20px;">
+        <h1>꒰ 演唱會釋票監控系統 ꒱</h1>
+        <div class="subtitle">🪄 即時監控票池狀態，請先點擊右方［開啟通知 💌］鍵，再勾選下方監控場次‪₊˚⊹ ʚɞ</div>
+        <div class="author">網站作者：Threads/@___lunarecho</div>
+        <button class="notification-btn" onclick="requestNotificationPermission()">🔔 開啟通知 💌</button>
     </div>
 
     <div id="events-container">
@@ -51,16 +54,12 @@
                         <div class="event-meta">最後更新：{{ ev.updated_at }}</div>
                     </div>
                     <div>
-                        {% if '有票' in ev.tickets.values() %}
-                            <span class="status-badge status-available">有票！</span>
-                        {% else %}
-                            <span class="status-badge status-all-sold">已售完</span>
-                        {% endif %}
+                        <span id="badge-{{ ev_id }}" class="status-badge status-sold-out">檢查中</span>
                     </div>
                 </div>
             </div>
             <div class="event-details" id="details-{{ ev_id }}">
-                <a href="{{ ev.url }}" target="_blank" style="color: #1a73e8;">前往購票頁面</a>
+                <a href="{{ ev.url }}" target="_blank" style="color: #1a73e8; font-weight: bold;">➡️ 前往購票頁面</a>
                 <ul style="padding-left: 20px; font-size: 14px; color: #555;">
                     {% for ticket, status in ev.tickets.items() %}
                     <li>{{ ticket }}: <b>{{ status }}</b></li>
@@ -71,23 +70,22 @@
         {% endfor %}
     </div>
 
+    <div style="text-align: center; margin-top: 30px; padding: 15px; color: #70757a; font-size: 13px; border-top: 1px dashed #ccc;">
+        ˚ʚ♡ɞ˚ 偵測數據有些微延遲，搶票請以購票頁面實際狀況為準唷！
+    </div>
+
     <script>
         function toggleDetails(id) {
             const el = document.getElementById('details-' + id);
             el.style.display = (el.style.display === 'block') ? 'none' : 'block';
         }
 
-        function playSound() {
-            new Audio('https://actions.google.com/sounds/v1/alarms/digital_watch_alarm_long.ogg').play().catch(()=>{});
-        }
-
         function requestNotificationPermission() {
             Notification.requestPermission().then(p => {
                 if(p === 'granted') {
-                    new Notification("🔔 系統測試", { body: "通知功能已啟用！請勾選各場次進行監控。" });
-                    playSound();
+                    new Notification("📦 系統測試", { body: "通知功能已啟用，請勾選各場次以開始進行監控.ᐟ‪.ᐟ‪" });
                 } else {
-                    alert("請允許瀏覽器通知權限，否則無法接收釋票提醒。");
+                    alert("請允許通知權限！");
                 }
             });
         }
@@ -95,25 +93,16 @@
         function handleCheckboxChange(id, name) {
             const cb = document.getElementById('notify-toggle-' + id);
             if (Notification.permission !== 'granted') {
-                alert("請點擊上方的「開啟通知」按鈕！");
+                alert("請先開啟通知權限！");
                 cb.checked = false;
                 return;
             }
             if (cb.checked) {
-                new Notification("✅ 監控已開啟", { body: `已訂閱【${name}】的釋票提醒。` });
+                new Notification("🔔 監控已開啟", { body: `已訂閱（${name}）的釋票提醒。` });
             } else {
-                new Notification("🔕 監控已關閉", { body: `已取消【${name}】的釋票提醒。` });
+                new Notification("🔕 監控已關閉", { body: `已取消（${name}）的釋票提醒。` });
             }
         }
-
-        // 自動背景檢查釋票狀態
-        setInterval(() => {
-            fetch('/api/status')
-            .then(r => r.json())
-            .then(data => {
-                // 這裡可加入與上次狀態比對的邏輯，若發現「售完變有票」則自動跳出通知
-            });
-        }, 60000); // 每分鐘自動刷新一次
     </script>
 </body>
 </html>
