@@ -29,10 +29,11 @@ EVENTS = [
         "url": "https://daydreamerstudio.kktix.cc/events/b14fcf04",
     },
     {
-        "id": "henry-moodie-khh",
-        "platform": "tixcraft",
-        "name": "Henry Moodie 高雄場",
-        "url": "https://tixcraft.com/ticket/area/26_henry/22868",
+        "id": "donghae-khh-0726",
+        "platform": "kktix",
+        "name": "DONGHAE 高雄場 7/26",
+        # 注意: 用不含 registrations/new 的活動介紹頁,那個購票頁需要先建立訂購 session
+        "url": "https://daydreamerstudio.kktix.cc/events/cd3b83be",
     },
 ]
 
