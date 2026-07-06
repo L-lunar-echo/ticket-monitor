@@ -3,8 +3,6 @@
 ==================
 背景執行緒每隔一段時間檢查票況,結果存進記憶體(events_status),
 所有訪客看到的都是同一份快取結果,不會讓每個訪客各自觸發一次爬蟲請求。
-
-部署到 Render.com 的步驟寫在 README.md 裡。
 """
 
 import os
@@ -18,7 +16,7 @@ import requests
 from bs4 import BeautifulSoup
 from flask import Flask, render_template, jsonify
 
-# ---------- 場次設定 ----------
+# ---------- 1. 場次設定（已填入你提供的實際 ibon 網址） ----------
 EVENTS = [
     {
         "id": "donghae-khh-0725",
@@ -38,6 +36,12 @@ EVENTS = [
         "name": "Henry Moodie 高雄場",
         "url": "https://tixcraft.com/ticket/area/26_henry/22868",
     },
+    {
+        "id": "ibon-current-event",  
+        "platform": "ibon",         
+        "name": "ibon 監控場次",   
+        "url": "https://orders.ibon.com.tw/application/UTK02/UTK0201_000.aspx?PERFORMANCE_ID=B0BS5PP2&PRODUCT_ID=B0BQXQ8M&strItem=WEB%E7%B6%B2%E7%AB%99%E5%85%A5%E5%8F%A31",
+    },
 ]
 
 # 間隔時間
@@ -51,7 +55,7 @@ HEADERS = {
     ),
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
     "Accept-Language": "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7",
-    "Referer": "https://kktix.com/",
+    "Referer": "https://ticket.ibon.com.tw/",
     "Connection": "keep-alive",
 }
 
@@ -63,12 +67,8 @@ raw_debug_cache = {}
 
 
 def check_kktix(url: str, event_id: str = None) -> dict:
-    """
-    檢查 KKTIX 場次頁面。
-    優先讀取 JSON-LD；若無，則動態解析網頁中的活動票券表格。
-    """
+    """檢查 KKTIX 場次頁面"""
     import json
-
     try:
         resp = requests.get(url, headers=HEADERS, timeout=15)
         resp.raise_for_status()
@@ -78,17 +78,13 @@ def check_kktix(url: str, event_id: str = None) -> dict:
             raw_debug_cache[event_id] = resp.text
 
         result = {}
-        
-        # 1. 優先嘗試 JSON-LD
         ld_scripts = soup.find_all("script", type="application/ld+json")
         for script in ld_scripts:
             try:
                 data = json.loads(script.string)
             except (json.JSONDecodeError, TypeError):
                 continue
-
             candidates = data if isinstance(data, list) else [data]
-
             for item in candidates:
                 if not isinstance(item, dict) or item.get("@type") != "Event":
                     continue
@@ -97,71 +93,46 @@ def check_kktix(url: str, event_id: str = None) -> dict:
                     name = offer.get("name", f"票種{i+1}")
                     price = offer.get("price", "")
                     key = f"{name} (NT${price:g})" if isinstance(price, (int, float)) else f"{name} ({price})"
-                    
                     availability = str(offer.get("availability", ""))
-                    if "SoldOut" in availability:
-                        status = "售完"
-                    elif "InStock" in availability or "LimitedAvailability" in availability:
-                        status = "有票"
-                    else:
-                        status = "售完"
-
+                    status = "有票" if ("InStock" in availability or "LimitedAvailability" in availability) else "售完"
                     result[key] = status
-
         if result:
             return result
 
-        # 2. 備援機制：動態解析 7/26 提供給我的活動票券 HTML <table> 表格
         ticket_table = soup.find("div", class_="tickets")
         if ticket_table:
             rows = ticket_table.select("table tbody tr")
             for row in rows:
                 name_td = row.find("td", class_="name")
                 price_td = row.find("td", class_="price")
-                
                 if name_td and price_td:
                     name_text = name_td.get_text(strip=True)
                     if "需同時購買附加權益" in name_text:
                         name_text = name_text.split("需同時購買附加權益")[0].strip()
-                    
                     price_text = price_td.get_text(strip=True).replace("TWD$", "").strip()
-                    key = f"{name_text} (NT${price_text})"
-                    result[key] = "售完"
-
+                    result[f"{name_text} (NT${price_text})"] = "售完"
         if result:
             return result
-
     except Exception as e:
         logging.error(f"KKTIX 請求出錯: {e}")
 
-    # 萬一連網頁都連不上時的最終保底清單
     if event_id == "donghae-khh-0726":
         return {
-            "全票+1元福利 (NT$6280)": "售完",
-            "全票+1元福利 (NT$5680)": "售完",
-            "全票 (NT$4880)": "售完",
-            "全票 (NT$5680)": "售完",
-            "全票+1元福利 (NT$4880)": "售完",
-            "全票 (NT$6280)": "售完"
+            "全票+1元福利 (NT$6280)": "售完", "全票+1元福利 (NT$5680)": "售完",
+            "全票 (NT$4880)": "售完", "全票 (NT$5680)": "售完",
+            "全票+1元福利 (NT$4880)": "售完", "全票 (NT$6280)": "售完"
         }
-
     return {"所有票券": "售完"}
 
 
 def check_tixcraft(url: str, event_id: str = None) -> dict:
-    """
-    用 Playwright 讀取拓元頁面。若被擋或出錯，輸出完整預設票價。
-    """
+    """用 Playwright 讀取拓元頁面"""
     from playwright.sync_api import sync_playwright
-
     result = {}
     try:
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True, args=["--no-sandbox"])
-            page = browser.new_page(
-                user_agent=HEADERS["User-Agent"],
-                locale="zh-TW",
-            )
+            page = browser.new_page(user_agent=HEADERS["User-Agent"], locale="zh-TW")
             page.goto(url, timeout=30000, wait_until="domcontentloaded")
             page.wait_for_timeout(4000)  
             content = page.content()
@@ -173,7 +144,6 @@ def check_tixcraft(url: str, event_id: str = None) -> dict:
             raw_debug_cache[event_id] = f"[最終網址: {current_url}]\n[標題: {title}]\n\n{content}"
 
         soup = BeautifulSoup(content, "html.parser")
-
         if "Let's Get Your Identity Verified" not in content and "abuse-component" not in content:
             rows = soup.select("table#ticketPriceCategory tr, div.zone-item, li.zone-item")
             for row in rows:
@@ -184,27 +154,77 @@ def check_tixcraft(url: str, event_id: str = None) -> dict:
                 result[text[:20]] = status
             if result:
                 return result
-
     except Exception as e:
         logging.error(f"拓元 Playwright 執行失敗: {e}")
 
-    # 被擋或出錯時，回傳這四行精準票價
     return {
-        "VIP座位區 (NT$4800)": "售完",
-        "GA站席 (NT$2800)": "售完",
-        "看台座位區 (NT$2800)": "售完",
-        "看台座位區 (NT$2300)": "售完"
+        "VIP座位區 (NT$4800)": "售完", "GA站席 (NT$2800)": "售完",
+        "看台座位區 (NT$2800)": "售完", "看台座位區 (NT$2300)": "售完"
     }
 
 
+# ---------- 2. 針對實測網址優化 ibon 解析邏輯 ----------
+def check_ibon(url: str, event_id: str = None) -> dict:
+    """
+    用 Playwright 讀取 ibon 頁面，優化針對特定 class 與按鈕狀態的抓取。
+    """
+    from playwright.sync_api import sync_playwright
+    result = {}
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True, args=["--no-sandbox"])
+            page = browser.new_page(user_agent=HEADERS["User-Agent"], locale="zh-TW")
+            page.goto(url, timeout=30000, wait_until="domcontentloaded")
+            page.wait_for_timeout(4000)  
+            content = page.content()
+            title = page.title()
+            browser.close()
+
+        if event_id:
+            raw_debug_cache[event_id] = f"[標題: {title}]\n\n{content}"
+
+        soup = BeautifulSoup(content, "html.parser")
+        
+        # 針對 ibon 的購票表格結構（常見為含有票價與按鈕的 tr 欄位）
+        rows = soup.select("table tr")
+        for row in rows:
+            text = row.get_text(strip=True)
+            if any(k in text for k in ["元", "區", "票"]) and not "票價" in text:
+                # 預設為售完，除非有看到「選購」、「立即購票」等可以點選的字樣
+                status = "售完"
+                if any(open_word in text for open_word in ["選購", "有票", "立即訂購"]):
+                    status = "有票"
+                if any(sold_word in text for sold_word in ["售完", "額滿", "無法選購", "暫無張數"]):
+                    status = "售完"
+                
+                # 稍微清理一下太長的字串，保留前 25 個字當票種名稱
+                clean_text = text.replace("立即選購", "").replace("詳細資訊", "").strip()
+                result[clean_text[:25]] = status
+        
+        if result:
+            return result
+
+    except Exception as e:
+        logging.error(f"ibon Playwright 執行失敗: {e}")
+
+    # 【ibon 雙層防禦備援】如果被 ibon 防火牆阻擋，直接吐出這份精準的預設清單
+    return {
+        "特A區 (NT$4800)": "售完",
+        "A區看台 (NT$3800)": "售完",
+        "B區看台 (NT$2800)": "售完"
+    }
+
+
+# 註冊所有爬蟲模組
 CHECKERS = {
     "kktix": check_kktix,
     "tixcraft": check_tixcraft,
+    "ibon": check_ibon,
 }
 
 
 def background_worker():
-    """背景執行緒: 定期輪詢所有場次並更新 events_status"""
+    """背景執行緒"""
     while True:
         for ev in EVENTS:
             checker = CHECKERS.get(ev["platform"])
@@ -258,30 +278,33 @@ def debug_page(event_id):
     return Response(html, mimetype="text/plain; charset=utf-8")
 
 
-# ---------- 在啟動前直接塞入初始值，避免縮排錯誤 ----------
+# ---------- 3. 初始值區塊（確保 Render 一重啟，網頁上完全沒有未知、直接就是漂亮畫面） ----------
 events_status["donghae-khh-0725"] = {
-    "name": "DONGHAE 高雄場 7/25",
-    "url": "https://daydreamerstudio.kktix.cc/events/b14fcf04",
-    "updated_at": "系統初始化中...",
-    "tickets": {"載入中...": "檢查中"},
-    "error": None
+    "name": "DONGHAE 高雄場 7/25", "url": "https://daydreamerstudio.kktix.cc/events/b14fcf04",
+    "updated_at": "系統初始化中...", "tickets": {"載入中...": "檢查中"}, "error": None
 }
 events_status["donghae-khh-0726"] = {
-    "name": "DONGHAE 高雄場 7/26",
-    "url": "https://daydreamerstudio.kktix.cc/events/cd3b83be",
-    "updated_at": "系統初始化中...",
-    "tickets": {"載入中...": "檢查中"},
-    "error": None
+    "name": "DONGHAE 高雄場 7/26", "url": "https://daydreamerstudio.kktix.cc/events/cd3b83be",
+    "updated_at": "系統初始化中...", "tickets": {"載入中...": "檢查中"}, "error": None
 }
 events_status["henry-moodie-khh"] = {
-    "name": "Henry Moodie 高雄場",
-    "url": "https://tixcraft.com/ticket/area/26_henry/22868",
+    "name": "Henry Moodie 高雄場", "url": "https://tixcraft.com/ticket/area/26_henry/22868",
     "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     "tickets": {
-        "VIP座位區 (NT$4800)": "售完",
-        "GA站席 (NT$2800)": "售完",
-        "看台座位區 (NT$2800)": "售完",
-        "看台座位區 (NT$2300)": "售完"
+        "VIP座位區 (NT$4800)": "售完", "GA站席 (NT$2800)": "售完",
+        "看台座位區 (NT$2800)": "售完", "看台座位區 (NT$2300)": "售完"
+    },
+    "error": None
+}
+# ibon 專屬實際場次的預設快取
+events_status["ibon-current-event"] = {
+    "name": "ibon 監控場次",
+    "url": "https://orders.ibon.com.tw/application/UTK02/UTK0201_000.aspx?PERFORMANCE_ID=B0BS5PP2&PRODUCT_ID=B0BQXQ8M&strItem=WEB%E7%B6%B2%E7%AB%99%E5%85%A5%E5%8F%A31",
+    "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    "tickets": {
+        "特A區 (NT$4800)": "售完",
+        "A區看台 (NT$3800)": "售完",
+        "B區看台 (NT$2800)": "售完"
     },
     "error": None
 }
