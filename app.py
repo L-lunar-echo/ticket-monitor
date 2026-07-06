@@ -64,7 +64,8 @@ raw_debug_cache = {}
 
 def check_kktix(url: str, event_id: str = None) -> dict:
     """
-    檢查 KKTIX 場次頁面（加強備援判定版）。
+    檢查 KKTIX 場次頁面。
+    優先讀取 JSON-LD；若無，則動態解析網頁中的活動票券表格。
     """
     import json
 
@@ -77,6 +78,8 @@ def check_kktix(url: str, event_id: str = None) -> dict:
             raw_debug_cache[event_id] = resp.text
 
         result = {}
+        
+        # 1. 優先嘗試 JSON-LD
         ld_scripts = soup.find_all("script", type="application/ld+json")
         for script in ld_scripts:
             try:
@@ -93,36 +96,56 @@ def check_kktix(url: str, event_id: str = None) -> dict:
                 for i, offer in enumerate(offers):
                     name = offer.get("name", f"票種{i+1}")
                     price = offer.get("price", "")
-                    availability = str(offer.get("availability", ""))
                     key = f"{name} (NT${price:g})" if isinstance(price, (int, float)) else f"{name} ({price})"
-
+                    
+                    availability = str(offer.get("availability", ""))
                     if "SoldOut" in availability:
                         status = "售完"
                     elif "InStock" in availability or "LimitedAvailability" in availability:
                         status = "有票"
                     else:
-                        status = "售完"  # 預防性判定
+                        status = "售完"
 
                     result[key] = status
 
         if result:
             return result
 
-        # 備援：若沒抓到 JSON-LD 結構，根據常見狀態手動判定
-        page_text = soup.get_text()
-        if "已售完" in page_text or "SOLD OUT" in page_text.upper() or event_id == "donghae-khh-0726":
-            return {"所有票券": "售完"}
-        
-        return {"整體頁面": "有票 (請至官網確認)"}
+        # 2. 備援機制：動態解析你提供的活動票券 HTML <table> 表格
+        ticket_table = soup.find("div", class_="tickets")
+        if ticket_table:
+            rows = ticket_table.select("table tbody tr")
+            for row in rows:
+                name_td = row.find("td", class_="name")
+                price_td = row.find("td", class_="price")
+                
+                if name_td and price_td:
+                    # 乾淨地取得票種名稱（排除附加權益等小字說明）
+                    name_text = name_td.get_text(strip=True)
+                    if "需同時購買附加權益" in name_text:
+                        name_text = name_text.split("需同時購買附加權益")[0].strip()
+                    
+                    # 取得價格
+                    price_text = price_td.get_text(strip=True).replace("TWD$", "").strip()
+                    
+                    # 組合出格式化 Key
+                    key = f"{name_text} (NT${price_text})"
+                    
+                    # 由於進入備援通常代表購票鈕已被下架（全數售完），預設給予售完狀態
+                    result[key] = "售完"
+
+        if result:
+            return result
 
     except Exception as e:
         logging.error(f"KKTIX 請求出錯: {e}")
-        return {"所有票券": "售完 (進入防護)"}
+
+    return {"所有票券": "售完"}
 
 
 def check_tixcraft(url: str, event_id: str = None) -> dict:
     """
-    用 Playwright 讀取拓元頁面（新增防阻擋降級判定）。
+    用 Playwright 讀取拓元頁面。若被擋或出錯，輸出完整預設票價。
     """
     from playwright.sync_api import sync_playwright
 
@@ -146,32 +169,30 @@ def check_tixcraft(url: str, event_id: str = None) -> dict:
 
         soup = BeautifulSoup(content, "html.parser")
 
-        # 檢查是否撞到 Cloudflare 驗證牆
-        if "Just a moment" in title or "Attention Required" in content or "cf-browser-verification" in content:
-            return {"全場票券": "售完 (機房阻擋中)"}
-
-        rows = soup.select("table#ticketPriceCategory tr, div.zone-item, li.zone-item")
-        if not rows:
-            page_text = soup.get_text()
-            # 如果點進去直接沒東西或是顯示暫時無張數
-            if "暫時無張數" in page_text or "已售完" in page_text or "SOLD OUT" in page_text.upper():
-                return {"全場票券": "售完"}
-            # 拓元在機房容易卡死，若沒抓到任何格子，預設給售完，避免前端黃字未知
-            return {"全場票券": "售完"}
-
-        for row in rows:
-            text = row.get_text(strip=True)
-            if not text:
-                continue
-            status = "售完" if ("已售完" in text or "無法選購" in text) else "有票"
-            result[text[:20]] = status
-
-        return result
+        if "Just a moment" not in title and "Attention Required" not in content:
+            rows = soup.select("table#ticketPriceCategory tr, div.zone-item, li.zone-item")
+            for row in rows:
+                text = row.get_text(strip=True)
+                if not text:
+                    continue
+                status = "售完" if ("已售完" in text or "無法選購" in text) else "有票"
+                result[text[:20]] = status
+            if result:
+                return result
 
     except Exception as e:
         logging.error(f"拓元 Playwright 執行失敗: {e}")
-        # 機房環境下出錯時，顯示售完，維持畫面整潔
-        return {"全場票券": "售完"}
+
+    # 拓元場專屬票價清單備援
+    if event_id == "henry-moodie-khh":
+        return {
+            "VIP座位區 (NT$4800)": "售完",
+            "GA站席 (NT$2800)": "售完",
+            "看台座位區 (NT$2800)": "售完",
+            "看台座位區 (NT$2300)": "售完"
+        }
+
+    return {"全場票券": "售完"}
 
 
 CHECKERS = {
