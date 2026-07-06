@@ -4,10 +4,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>演唱會釋票監控系統</title>
-    <link href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@400;500;700;900&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Chiron+GoRound+TC:wght@400;500;700;900&display=swap" rel="stylesheet">
     <style>
         :root {
-            --bg-color: #f7f5f3;
+            --bg-color: #e7e7e7;
             --card-bg: #ffffff;
             --text-main: #333333;
             --accent-color: #8c7b75;
@@ -15,16 +15,17 @@
         }
 
         body { 
-            font-family: 'Zen Maru Gothic', sans-serif; 
+            font-family: 'Chiron GoRound TC', 'PingFang TC', 'Microsoft JhengHei', sans-serif; 
             max-width: 600px; 
             margin: 0 auto; 
             padding: 20px; 
             background-color: var(--bg-color); 
-            background-image: radial-gradient(#ffffff 20%, transparent 20%);
+            background-image: radial-gradient(#f0f0f0 20%, transparent 20%);
             background-size: 30px 30px; 
             color: var(--text-main);
             font-size: 14px; 
-            font-weight: 700; /* 全面改為 700 */
+            font-weight: 700;
+            line-height: 1.6;
         }
 
         h1 { color: #1a1a1a; margin-bottom: 10px; text-align: center; font-size: 26px; font-weight: 700; }
@@ -51,7 +52,8 @@
         .toggle-btn { text-align: left; margin-top: 12px; font-size: 13px; color: #888; cursor: pointer; border-top: 1px solid #f9f9f9; padding-top: 8px; font-weight: 700; }
         .event-details { display: none; padding: 12px 15px; border-top: 1px solid #f9f9f9; background: #fafafa; font-size: 14px; text-align: left; font-weight: 700; }
         
-        .notification-btn { display: block; width: 100%; max-width: 200px; margin: 0 auto 20px auto; background: #222; color: #fff; border: none; padding: 12px; border-radius: 8px; cursor: pointer; font-weight: 700; font-size: 14px; }
+        .notification-btn { display: block; width: 100%; max-width: 200px; margin: 0 auto 6px auto; background: #222; color: #fff; border: none; padding: 12px; border-radius: 8px; cursor: pointer; font-weight: 700; font-size: 14px; }
+        .notification-hint { text-align: center; font-size: 12px; color: #999; margin-bottom: 20px; font-weight: 700; }
     </style>
 </head>
 <body>
@@ -64,21 +66,26 @@
             <a href="https://lin.ee/ouqhqZD" target="_blank">LINE｜＠963maprr</a>
         </div>
         <button class="notification-btn" onclick="requestNotificationPermission()">開啟通知 💌</button>
+        <div class="notification-hint" id="permission-hint"></div>
     </div>
 
     <div id="events-container">
         {% for ev_id, ev in events.items() %}
+        {% set ticket_values = ev.tickets.values() | list if ev.tickets else [] %}
+        {% set has_ticket = '有票' in ticket_values %}
         <div class="event-card">
             <div class="event-header">
                 <div class="main-info">
                     <div class="notify-control">
-                        <input type="checkbox" id="notify-toggle-{{ ev_id }}" onchange="handleCheckboxChange('{{ ev_id }}', '{{ ev.name }}')">
+                        <input type="checkbox" id="notify-toggle-{{ ev_id }}" onchange="handleCheckboxChange('{{ ev_id }}', this.checked)">
                     </div>
                     <div class="event-info">
                         <div class="event-name">{{ ev.name }}</div>
-                        <div class="event-meta">更新：{{ ev.updated_at }}</div>
+                        <div class="event-meta">更新：{{ ev.updated_at or '尚未取得資料' }}</div>
                     </div>
-                    <span id="badge-{{ ev_id }}" class="status-badge status-sold-out">檢查中</span>
+                    <span id="badge-{{ ev_id }}" class="status-badge {{ 'status-available' if has_ticket else 'status-sold-out' }}">
+                        {{ '還有票 🎫' if has_ticket else '已售完 🈳' }}
+                    </span>
                 </div>
                 <div class="toggle-btn" onclick="toggleDetails('{{ ev_id }}')">🔽 展開完整票池狀況</div>
             </div>
@@ -95,11 +102,71 @@
         {% endfor %}
     </div>
 
-    <div style="margin-top: 25px; padding: 10px; color: #888; font-size: 12px; font-weight: 700; text-align: center;">
-        ⚠️ 偵測數據有些微延遲，搶票請以購票頁面即時狀況為準。
-    </div>
-
     <script>
+        const STORAGE_KEY = 'ticket_monitor_subscriptions';
+
+        // 讀取使用者之前勾選過、想接收通知的場次清單
+        function loadSubscriptions() {
+            try {
+                const raw = localStorage.getItem(STORAGE_KEY);
+                return raw ? new Set(JSON.parse(raw)) : new Set();
+            } catch (e) {
+                return new Set();
+            }
+        }
+
+        function saveSubscriptions(set) {
+            try {
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(Array.from(set)));
+            } catch (e) {
+                console.error('無法儲存訂閱設定', e);
+            }
+        }
+
+        let subscriptions = loadSubscriptions();
+        // 記住每個場次「目前是否有票」,只有從沒票變有票的那一刻才發通知,避免每次輪詢都吵
+        let lastKnownHasTicket = {};
+
+        // 頁面載入時,把之前勾選過的場次checkbox 打勾回來
+        window.addEventListener('DOMContentLoaded', () => {
+            subscriptions.forEach(id => {
+                const box = document.getElementById('notify-toggle-' + id);
+                if (box) box.checked = true;
+            });
+            updatePermissionHint();
+        });
+
+        function updatePermissionHint() {
+            const hint = document.getElementById('permission-hint');
+            if (!('Notification' in window)) {
+                hint.innerText = '此瀏覽器不支援通知功能';
+            } else if (Notification.permission === 'granted') {
+                hint.innerText = '✅ 通知已開啟';
+            } else if (Notification.permission === 'denied') {
+                hint.innerText = '⚠️ 通知已被封鎖,請到瀏覽器設定手動開啟';
+            } else {
+                hint.innerText = '尚未開啟通知';
+            }
+        }
+
+        function requestNotificationPermission() {
+            if (!('Notification' in window)) {
+                alert('此瀏覽器不支援通知功能');
+                return;
+            }
+            Notification.requestPermission().then(() => updatePermissionHint());
+        }
+
+        function handleCheckboxChange(id, checked) {
+            if (checked) {
+                subscriptions.add(id);
+            } else {
+                subscriptions.delete(id);
+            }
+            saveSubscriptions(subscriptions);
+        }
+
+        // 切換詳細資訊顯示
         function toggleDetails(id) {
             const el = document.getElementById('details-' + id);
             const btn = event.target;
@@ -111,7 +178,43 @@
                 btn.innerText = '🔼 收起完整票池狀況';
             }
         }
-        // 其餘邏輯保持不變
+
+        function fireNotification(eventName) {
+            if (!('Notification' in window) || Notification.permission !== 'granted') return;
+            new Notification('🎫 釋票通知!', {
+                body: eventName + ' 出現可購買的票券,快去看看!',
+            });
+        }
+
+        // 狀態自動更新 (包含標籤顯示邏輯 + 通知邏輯)
+        setInterval(() => {
+            fetch('/api/status')
+            .then(r => r.json())
+            .then(data => {
+                for (let id in data) {
+                    let ev = data[id];
+                    let badge = document.getElementById('badge-' + id);
+                    if (!badge) continue;
+
+                    let hasTicket = Object.values(ev.tickets || {}).includes("有票");
+
+                    if (hasTicket) {
+                        badge.innerText = "還有票 🎫";
+                        badge.className = "status-badge status-available";
+                    } else {
+                        badge.innerText = "已售完 🈳";
+                        badge.className = "status-badge status-sold-out";
+                    }
+
+                    // 只有「之前沒票 -> 現在有票」的那一刻才通知,避免每次輪詢都吵
+                    const prev = lastKnownHasTicket[id];
+                    if (prev === false && hasTicket === true && subscriptions.has(id)) {
+                        fireNotification(ev.name);
+                    }
+                    lastKnownHasTicket[id] = hasTicket;
+                }
+            }).catch(err => console.error("更新失敗", err));
+        }, 15000); // 每 15 秒檢查一次前端顯示(後端實際爬取頻率是分開控制的,不受這個影響)
     </script>
 </body>
 </html>
