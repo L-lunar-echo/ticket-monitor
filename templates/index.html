@@ -81,7 +81,6 @@
             {% endif %}
         {% endfor %}
         
-        {# 修正：務必加上 id="card-{{ ev_id }}" 讓 JavaScript 能成功鎖定此卡片 #}
         <div class="event-card" id="card-{{ ev_id }}">
             <div class="event-header">
                 <div class="main-info">
@@ -144,11 +143,22 @@
         let subscriptions = loadSubscriptions();
         let lastKnownHasTicket = {};
 
+        // 初始化目前的狀態紀錄
         window.addEventListener('DOMContentLoaded', () => {
             subscriptions.forEach(id => {
                 const box = document.getElementById('notify-toggle-' + id);
                 if (box) box.checked = true;
             });
+            
+            // 抓取一開始 HTML 渲染出來的狀態，塞入歷史狀態庫中避免初次 fetch 誤判
+            {% for ev_id, ev in events.items() %}
+                {% set initial_has = false %}
+                {% for zone, status in ev.tickets.items() %}
+                    {% if status != "已售完" %}{% set initial_has = true %}{% endif %}
+                {% endfor %}
+                lastKnownHasTicket['{{ ev_id }}'] = {{ 'true' if initial_has else 'false' }};
+            {% endfor %}
+
             updatePermissionHint();
         });
 
@@ -208,12 +218,10 @@
             .then(data => {
                 for (let id in data) {
                     let ev = data[id];
-                    let card = document.getElementById('card-' + id); 
                     let badge = document.getElementById('badge-' + id);
                     let listUl = document.getElementById('ticket-list-' + id);
                     if (!badge || !listUl) continue;
 
-                    // 核心修正：只要狀態任何一個不是「已售完」，就視為有票
                     let hasTicket = false;
                     let listHtml = '';
                     
