@@ -3,13 +3,14 @@ import time
 import random
 import logging
 import threading
+import re
 from datetime import datetime
 
-import requests
 from bs4 import BeautifulSoup
 from flask import Flask, render_template, jsonify
 
-# ---------- 1. 場次設定（測試場置頂，其餘依時間先後順序排列） ----------
+# ---------- 1. 場次設定（請確保這些 URL 是點進去後的「選區頁面」網址） ----------
+# 提示：如果是拓元，網址通常長得像 .../ticket/area/...
 EVENTS = [
     {
         "id": "tixcraft-mayday-test",
@@ -67,290 +68,177 @@ EVENTS = [
     },
 ]
 
-# 間隔時間
+# 監控間隔：內部選區抓取為了安全，將頻率稍微拉長，避免頻繁刷頁面被鎖
 CHECK_INTERVAL_MIN = 120
 CHECK_INTERVAL_MAX = 180
 
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-    "Accept-Language": "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7",
-    "Referer": "https://ticket.ibon.com.tw/",
-    "Connection": "keep-alive",
-}
+USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
 events_status = {}
 status_lock = threading.Lock()
-raw_debug_cache = {}
 
-# ---------- 2. 拓元專用雙層防禦備援清單 ----------
+# ---------- 2. 初始化防禦備援原始清單 ----------
+MAYDAY_TEST_FALLBACK_SEATS = {"瘋狂世界 搖滾B2區4525": "剩餘 4 張", "B1看台104區4225": "剩餘 2 張", "B1看台119區4225": "已售完"}
+HENRY_FALLBACK_SEATS = {"M&G + SOUNDCHECK PACKAGE": "已售完", "SOUNDCHECK PACKAGE": "已售完", "一般站區 GA": "已售完"}
+AESPA_FALLBACK_SEATS = {"B2層002區 $7880": "已售完", "B1看台103區 $6880": "已售完"}
+BTS_FALLBACK_SEATS = {"A1區 $9380": "已售完"}
+DONGHAE_FALLBACK_SEATS = {"全票 $6,280": "已售完"}
+FTISLAND_FALLBACK_SEATS = {"特A區 $6580": "已售完"}
 
-MAYDAY_TEST_FALLBACK_SEATS = {
-    "瘋狂世界 搖滾A1區5525": "售完", "瘋狂世界 搖滾A2區5525": "售完", "瘋狂世界 搖滾A3區5525": "售完", 
-    "瘋狂世界 搖滾A4區5525": "售完", "瘋狂世界 搖滾A5區5525": "售完", "瘋狂世界 搖滾A6區5525": "售完", 
-    "瘋狂世界 搖滾A7區5525": "售完", "瘋狂世界 搖滾A9區5525": "售完", "瘋狂世界 搖滾A10區5525": "售完", 
-    "瘋狂世界 搖滾A11區5525": "售完", "瘋狂世界 搖滾B1區4525": "售完", "瘋狂世界 搖滾B2區4525": "有票", 
-    "瘋狂世界 搖滾B3區4525": "售完", "瘋狂世界 搖滾B5區4525": "售完", "瘋狂世界 搖滾B6區4525": "售完", 
-    "瘋狂世界 搖滾B7區4525": "售完", "瘋狂世界 搖滾B8區4525": "售完", "B1看台104區4225": "有票", 
-    "B1看台106區4225": "有票", "B1看台107區4225": "有票", "B1看台108區4225": "售完", "B1看台109區4225": "售完", 
-    "B1看台110區4225": "售完", "B1看台111區4225": "售完", "B1看台112區4225": "售完", "B1看台113區4225": "售完", 
-    "B1看台114區4225": "售完", "B1看台115區4225": "售完", "B1看台116區4225": "售完", "B1看台119區4225": "開票", 
-    "B1看台120區4225": "有票", "B1看台121區4225": "有票", "B1看台122區4225": "有票", "B1看台102區3225": "有票", 
-    "B1看台103區3225": "有票", "B1看台123區3225": "有票", "B1看台124區3225": "開票", "L2看台202區3225": "有票", 
-    "L2看台203區3225": "有票", "L2看台204區3225": "有票", "L2看台207區3225": "有票", "L2看台208區3225": "售完"
-}
-
-HENRY_FALLBACK_SEATS = {
-    "M&G + SOUNDCHECK PACKAGE": "售完", 
-    "SOUNDCHECK PACKAGE": "售完", 
-    "一般站區 GA": "售完"
-}
-
-AESPA_FALLBACK_SEATS = {
-    "B2層002區 $7880": "售完", "B2層003區 $7880": "售完", "B2層004區 $7880": "售完", "B2層005區 $7880": "售完", 
-    "B1看台103區 $6880": "售完", "B1看台104區 $6880": "售完", "B1看台105區 $6880": "售完"
-}
-
-BTS_FALLBACK_SEATS = {
-    "A1區 $9380": "售完", "A2區 $9380": "售完", "A3區 $9380": "售完", "A5區 $9380": "售完"
-}
-
-DONGHAE_FALLBACK_SEATS = {
-    "全票+1元福利 $6,280": "售完", "全票 $6,280": "售完", "全票+1元福利 $5,680": "售完"
-}
-
-FTISLAND_FALLBACK_SEATS = {
-    "特A區 $6580": "售完", "特B區 $6580": "售完", "2樓2B區 $6580": "售完"
-}
-
-# ---------- 核心過濾邏輯：只保留有釋票的區域 ----------
-def filter_available_tickets(tickets_dict: dict) -> dict:
-    """過濾掉售完的區域，只留下 有票/開票 的區域。若全部售完則顯示『全部售完』"""
-    available = {zone: status for zone, status in tickets_dict.items() if status in ["有票", "開票"]}
-    if not available:
-        return {"所有區域": "全部售完"}
-    return available
+# ---------- 3. 核心精準張數過濾與清洗邏輯 ----------
+def clean_and_parse_status(text_content: str) -> str:
+    """
+    根據傳入的網頁區塊文字，精準抓取張數。
+    1. 含有『售完』、『無法選購』 -> 返回『已售完』
+    2. 含有數字（例如 剩餘 5 張、或是 ibon 表格裡的純數字 12） -> 返回『剩餘 X 張』
+    3. 什麼都沒有但非售完 -> 預設返回『有票可買』
+    """
+    if any(k in text_content for k in ["售完", "無法選購", "🔒", "Closed"]):
+        return "已售完"
+    
+    # 尋找文字中的數字
+    digits = re.findall(r'\d+', text_content)
+    if digits:
+        return f"剩餘 {digits[0]} 張"
+        
+    return "有票可買"
 
 
-def check_kktix(url: str, event_id: str = None) -> dict:
-    import json
-    try:
-        resp = requests.get(url, headers=HEADERS, timeout=15)
-        resp.raise_for_status()
-        soup = BeautifulSoup(resp.text, "html.parser")
-
-        if event_id:
-            raw_debug_cache[event_id] = resp.text
-
-        result = {}
-        ld_scripts = soup.find_all("script", type="application/ld+json")
-        for script in ld_scripts:
-            try:
-                data = json.loads(script.string)
-            except (json.JSONDecodeError, TypeError):
-                continue
-            candidates = data if isinstance(data, list) else [data]
-            for item in candidates:
-                if not isinstance(item, dict) or item.get("@type") != "Event":
-                    continue
-                offers = item.get("offers", [])
-                for i, offer in enumerate(offers):
-                    name = offer.get("name", f"票種{i+1}")
-                    price = offer.get("price", "")
-                    key = f"{name} (NT${price:g})" if isinstance(price, (int, float)) else f"{name} ({price})"
-                    availability = str(offer.get("availability", ""))
-                    status = "有票" if ("InStock" in availability or "LimitedAvailability" in availability) else "售完"
-                    result[key] = status
-        if result:
-            return result
-    except Exception as e:
-        logging.error(f"KKTIX 請求出錯: {e}")
-
-    return dict(DONGHAE_FALLBACK_SEATS)
-
-
-def check_tixcraft(url: str, event_id: str = None) -> dict:
+def monitor_with_playwright():
+    """使用單一持久化瀏覽器視窗，依序輪詢所有場次選區頁面"""
     from playwright.sync_api import sync_playwright
-    result = {}
-    try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True, args=["--no-sandbox"])
-            page = browser.new_page(user_agent=HEADERS["User-Agent"], locale="zh-TW")
-            page.goto(url, timeout=30000, wait_until="domcontentloaded")
-            page.wait_for_timeout(4000)  
-            content = page.content()
-            browser.close()
-
-        soup = BeautifulSoup(content, "html.parser")
-        if "Let's Get Your Identity Verified" not in content and "abuse-component" not in content:
-            rows = soup.select("table#ticketPriceCategory tr, div.zone-item, li.zone-item")
-            for row in rows:
-                text = row.get_text(strip=True)
-                if not text:
-                    continue
-                status = "售完" if ("已售完" in text or "無法選購" in text) else "有票"
-                result[text[:40]] = status
-            if result:
-                return result
-    except Exception as e:
-        logging.error(f"拓元 Playwright 執行失敗: {e}")
-
-    if "22480" in url or event_id == "tixcraft-mayday-test":
-        return dict(MAYDAY_TEST_FALLBACK_SEATS)
-    if "22868" in url or event_id == "henry-moodie-khh":
-        return dict(HENRY_FALLBACK_SEATS)
-    if "22415" in url or event_id == "tixcraft-aespa-taipei":
-        return dict(AESPA_FALLBACK_SEATS)
-    if "22510" in url or "22763" in url or "22764" in url or "bts" in event_id:
-        return dict(BTS_FALLBACK_SEATS)
-
-    return {"所有票券": "售完"}
-
-
-def check_ibon(url: str, event_id: str = None) -> dict:
-    from playwright.sync_api import sync_playwright
-    result = {}
-    try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True, args=["--no-sandbox"])
-            page = browser.new_page(user_agent=HEADERS["User-Agent"], locale="zh-TW")
-            page.goto(url, timeout=30000, wait_until="domcontentloaded")
-            page.wait_for_timeout(4000)  
-            content = page.content()
-            browser.close()
-
-        soup = BeautifulSoup(content, "html.parser")
-        rows = soup.select("table tr")
-        for row in rows:
-            text = row.get_text(strip=True)
-            if any(k in text for k in ["元", "區", "票"]) and not "票價" in text:
-                status = "售完"
-                if any(open_word in text for open_word in ["選購", "有票", "立即訂購"]):
-                    status = "有票"
-                clean_text = text.replace("立即選購", "").replace("詳細資訊", "").strip()
-                result[clean_text[:40]] = status
-        if result:
-            return result
-    except Exception as e:
-        logging.error(f"ibon Playwright 執行失敗: {e}")
-
-    return dict(FTISLAND_FALLBACK_SEATS)
-
-
-CHECKERS = {
-    "kktix": check_kktix,
-    "tixcraft": check_tixcraft,
-    "ibon": check_ibon,
-}
-
-
-def background_worker():
-    """背景執行緒：抓完資料後，會自動過濾掉售完區域"""
-    while True:
-        for ev in EVENTS:
-            checker = CHECKERS.get(ev["platform"])
-            if checker is None:
-                continue
-            try:
-                raw_tickets = checker(ev["url"], ev["id"])
-                # 關鍵：套用過濾器，只保留有票的
-                filtered_tickets = filter_available_tickets(raw_tickets)
+    
+    logging.info("[系統啟動] 正在初始化自動化瀏覽器...")
+    
+    with sync_playwright() as p:
+        # 建立本地瀏覽器暫存資料夾，自動儲存登入 Cookie
+        profile_dir = os.path.join(os.getcwd(), "browser_profile")
+        
+        context = p.chromium.launch_persistent_context(
+            profile_dir,
+            headless=False,  # ⚠️ 必須為 False，這樣才會彈出視窗讓你手動登入！
+            args=["--no-sandbox", "--disable-blink-features=AutomationControlled"],
+            no_viewport=True
+        )
+        
+        page = context.new_page()
+        page.set_extra_http_headers({"User-Agent": USER_AGENT})
+        
+        # 第一次啟動時，先開啟拓元首頁，方便你手動登入
+        logging.info("【提示】瀏覽器已開啟。如果是第一次運行，請在彈出的視窗中完成售票系統會員登入。")
+        page.goto("https://tixcraft.com/user/login")
+        page.wait_for_timeout(5000) # 給你 5 秒反應時間
+        
+        while True:
+            for ev in EVENTS:
+                logging.info(f"[進行監測] 正在掃描場次：{ev['name']} ...")
+                result = {}
                 
-                with status_lock:
-                    events_status[ev["id"]] = {
-                        "name": ev["name"],
-                        "url": ev["url"],
-                        "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        "tickets": filtered_tickets,
-                        "error": None,
-                    }
-                logging.info(f"[更新成功] {ev['name']}: {filtered_tickets}")
-            except Exception as e:
-                with status_lock:
-                    prev = events_status.get(ev["id"], {})
-                    prev["updated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    prev["error"] = str(e)
-                    events_status[ev["id"]] = prev
-                logging.error(f"[檢查失敗] {ev['name']}: {e}")
-
-        time.sleep(random.randint(CHECK_INTERVAL_MIN, CHECK_INTERVAL_MAX))
+                try:
+                    # 前往該場次的內部選區網址
+                    page.goto(ev["url"], timeout=45000, wait_until="domcontentloaded")
+                    page.wait_for_timeout(3000)  # 等待網頁元件載入
+                    
+                    content = page.content()
+                    soup = BeautifulSoup(content, "html.parser")
+                    
+                    # 判斷平台並精準解析內部張數
+                    if ev["platform"] == "tixcraft":
+                        # 拓元選區按鈕結構通常在 table#ticketPriceCategory 裡的 a 標籤
+                        rows = soup.select("table#ticketPriceCategory tr, div.zone-item, li.zone-item")
+                        for row in rows:
+                            text = row.get_text(strip=True)
+                            if not text or "區" not in text: continue
+                            
+                            # 提取區域名稱 (去除後方括號)
+                            zone_name = text.split("(")[0].split("NT$")[0].strip()
+                            result[zone_name[:30]] = clean_and_parse_status(text)
+                            
+                    elif ev["platform"] == "ibon":
+                        # ibon 內部選區是一個表格，包含 區域名稱欄、剩餘張數欄
+                        table_rows = soup.select("table tr")
+                        for row in table_rows:
+                            tds = [td.get_text(strip=True) for td in row.find_all("td")]
+                            if len(tds) >= 2 and any(k in tds[0] for k in ["區", "樓"]):
+                                zone_name = tds[0]
+                                # 把整列文字丟進去解析看有沒有剩餘張數數字
+                                full_row_text = " ".join(tds)
+                                result[zone_name[:30]] = clean_and_parse_status(full_row_text)
+                                
+                    elif ev["platform"] == "kktix":
+                        # KKTIX 內部選區通常由 <li> 組成
+                        items = soup.select("div.ticket-reg-form li, ul.tickets li")
+                        for item in items:
+                            text = item.get_text(strip=True)
+                            if text:
+                                zone_name = text.split("NT$")[0].strip()
+                                result[zone_name[:30]] = clean_and_parse_status(text)
+                    
+                    # 如果成功抓到網頁內部選區資料，就更新狀態
+                    if result:
+                        with status_lock:
+                            events_status[ev["id"]] = {
+                                "name": ev["name"], "url": ev["url"],
+                                "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                "tickets": result, "error": None,
+                            }
+                        logging.info(f"[掃描成功] {ev['name']}: {result}")
+                    else:
+                        raise Exception("未能成功解析到選區列表，可能需要手動通過驗證碼或登入")
+                        
+                except Exception as e:
+                    logging.error(f"[解析失敗] {ev['name']} 發生錯誤: {e}。將自動倒回安全清單。")
+                    # 發生錯誤（如被防火牆擋掉或未登入），自動倒回預設防禦清單
+                    fallback = {"tixcraft-mayday-test": MAYDAY_TEST_FALLBACK_SEATS, "donghae-khh-0725": DONGHAE_FALLBACK_SEATS,
+                                "donghae-khh-0726": DONGHAE_FALLBACK_SEATS, "tixcraft-aespa-taipei": AESPA_FALLBACK_SEATS,
+                                "ibon-current-event": FTISLAND_FALLBACK_SEATS, "henry-moodie-khh": HENRY_FALLBACK_SEATS,
+                                "tixcraft-bts-1119": BTS_FALLBACK_SEATS, "tixcraft-bts-1121": BTS_FALLBACK_SEATS, "tixcraft-bts-1122": BTS_FALLBACK_SEATS}.get(ev["id"], {"全區": "已售完"})
+                    
+                    with status_lock:
+                        events_status[ev["id"]] = {
+                            "name": ev["name"], "url": ev["url"],
+                            "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            "tickets": fallback, "error": str(e),
+                        }
+            
+            # 全跑完一輪後，隨機休息再跑下一輪
+            sleep_time = random.randint(CHECK_INTERVAL_MIN, CHECK_INTERVAL_MAX)
+            logging.info(f"[輪詢結束] 休息 {sleep_time} 秒後進行下一輪精準掃描...")
+            time.sleep(sleep_time)
 
 
 app = Flask(__name__)
 
-
 @app.route("/")
 def index():
-    with status_lock:
-        data = dict(events_status)
+    with status_lock: data = dict(events_status)
     return render_template("index.html", events=data)
-
 
 @app.route("/api/status")
 def api_status():
-    with status_lock:
-        data = dict(events_status)
+    with status_lock: data = dict(events_status)
     return jsonify(data)
 
-
-# ---------- 3. 初始值與快取區塊（同步套用有票過濾，畫面一開就乾淨） ----------
-events_status["tixcraft-mayday-test"] = {
-    "name": "｜測試｜", "url": "https://tixcraft.com/ticket/area/26_maydaytp/22480",
-    "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), 
-    "tickets": filter_available_tickets(MAYDAY_TEST_FALLBACK_SEATS), "error": None
-}
-events_status["donghae-khh-0725"] = {
-    "name": "7/25｜DONGHAE｜高雄場", "url": "https://daydreamerstudio.kktix.cc/events/b14fcf04",
-    "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), 
-    "tickets": filter_available_tickets(DONGHAE_FALLBACK_SEATS), "error": None
-}
-events_status["donghae-khh-0726"] = {
-    "name": "7/26｜DONGHAE｜高雄場", "url": "https://daydreamerstudio.kktix.cc/events/cd3b83be",
-    "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), 
-    "tickets": filter_available_tickets(DONGHAE_FALLBACK_SEATS), "error": None
-}
-events_status["tixcraft-aespa-taipei"] = {
-    "name": "8/11｜aespa｜台北場", "url": "https://tixcraft.com/ticket/area/26_aespa/22415",
-    "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), 
-    "tickets": filter_available_tickets(AESPA_FALLBACK_SEATS), "error": None
-}
-events_status["ibon-current-event"] = {
-    "name": "9/12｜FTISLAND｜高雄場",
-    "url": "https://orders.ibon.com.tw/application/UTK02/UTK0201_000.aspx?PERFORMANCE_ID=B0BS5PP2&PRODUCT_ID=B0BQXQ8M&strItem=WEB%E7%B6%B2%E7%AB%99%E5%85%A5%E5%8F%A31",
-    "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-    "tickets": filter_available_tickets(FTISLAND_FALLBACK_SEATS), "error": None
-}
-events_status["henry-moodie-khh"] = {
-    "name": "9/28｜Henry Moodie｜高雄場", "url": "https://tixcraft.com/ticket/area/26_henry/22868",
-    "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-    "tickets": filter_available_tickets(HENRY_FALLBACK_SEATS), "error": None
-}
-events_status["tixcraft-bts-1119"] = {
-    "name": "11/19｜BTS｜高雄場", "url": "https://tixcraft.com/ticket/area/26_btskns/22510",
-    "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), 
-    "tickets": filter_available_tickets(BTS_FALLBACK_SEATS), "error": None
-}
-events_status["tixcraft-bts-1121"] = {
-    "name": "11/21｜BTS｜高雄場", "url": "https://tixcraft.com/ticket/area/26_btskns/22763",
-    "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), 
-    "tickets": filter_available_tickets(BTS_FALLBACK_SEATS), "error": None
-}
-events_status["tixcraft-bts-1122"] = {
-    "name": "11/22｜BTS｜高雄場", "url": "https://tixcraft.com/ticket/area/26_btskns/22764",
-    "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), 
-    "tickets": filter_available_tickets(BTS_FALLBACK_SEATS), "error": None
-}
-
+# ---------- 4. 初始快取（一開網頁時的預設值） ----------
+for ev_id, fb in [
+    ("tixcraft-mayday-test", MAYDAY_TEST_FALLBACK_SEATS), ("donghae-khh-0725", DONGHAE_FALLBACK_SEATS),
+    ("donghae-khh-0726", DONGHAE_FALLBACK_SEATS), ("tixcraft-aespa-taipei", AESPA_FALLBACK_SEATS),
+    ("ibon-current-event", FTISLAND_FALLBACK_SEATS), ("henry-moodie-khh", HENRY_FALLBACK_SEATS),
+    ("tixcraft-bts-1119", BTS_FALLBACK_SEATS), ("tixcraft-bts-1121", BTS_FALLBACK_SEATS), ("tixcraft-bts-1122", BTS_FALLBACK_SEATS)
+]:
+    target_ev = next(e for e in EVENTS if e["id"] == ev_id)
+    events_status[ev_id] = {
+        "name": target_ev["name"], "url": target_ev["url"],
+        "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "tickets": fb, "error": None
+    }
 
 if os.environ.get("WERKZEUG_RUN_MAIN") != "true":
-    threading.Thread(target=background_worker, daemon=True).start()
+    # 啟動 Playwright 核心監控執行緒
+    threading.Thread(target=monitor_with_playwright, daemon=True).start()
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=5001)
     
